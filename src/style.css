@@ -1,3 +1,8 @@
+/* base reset (the web version got this from its host page) */
+[hidden]{display:none!important}
+html,body{margin:0}
+body{font-size:14px;-webkit-tap-highlight-color:transparent}
+img{max-width:100%}
 
 /* Layout: single-column phone app — sticky header with 3 tabs (Dashboard / PGs / Enquiries), filter chips, stacked cards, bottom-sheet forms */
 :root{
