@@ -92,9 +92,11 @@ const AUTH_ERRORS = {
   'auth/weak-password': 'Use at least 6 characters for the password.',
   'auth/network-request-failed': 'No internet. Connect and try again.',
   'auth/too-many-requests': 'Too many tries. Wait a minute and try again.',
-  'auth/operation-not-allowed': 'Turn on Email/Password in Firebase → Authentication.',
+  'auth/operation-not-allowed': 'Turn on Email/Password in Firebase → Authentication → Sign-in method.',
+  'auth/configuration-not-found': 'Login is not set up yet. In Firebase, open Authentication, tap Get started, then turn on Email/Password.',
+  'auth/admin-restricted-operation': 'New accounts are blocked. In Firebase → Authentication → Settings, allow user sign-up.',
 };
-const msg = e => AUTH_ERRORS[e && e.code] || 'Something went wrong. Try again.';
+const msg = e => AUTH_ERRORS[e && e.code] || `Something went wrong (${(e && e.code) || 'unknown error'}). Try again.`;
 
 export function initAuth({ onSignedIn, onSignedOut }) {
   const box = $('auth');
