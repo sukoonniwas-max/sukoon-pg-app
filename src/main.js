@@ -6,6 +6,7 @@ import '@fontsource/bricolage-grotesque/600.css';
 import '@fontsource/bricolage-grotesque/800.css';
 import './style.css';
 import { initAuth, signOutUser, importBackup, downloads } from './firebase.js';
+import { resolveMapsLink } from './maps.js';
 
 
 const ICON = {
@@ -364,13 +365,30 @@ function pgForm(p={}){
     await save(S.db.collection('pgs').doc(p.id||undefined), data, 'PG saved');
   };
   const pb = $('f-paste');
-  if (pb) pb.addEventListener('input', () => {
+  let pasteRun = 0;
+  if (pb) pb.addEventListener('input', async () => {
+    const run = ++pasteRun;
     const r = parseMapsShare(pb.value);
-    const put = (id, v) => { if (v) $(id).value = v; };
-    put('f-name', r.name); put('f-addr', r.address); put('f-map', r.mapUrl); put('f-area', r.area); put('f-phone', r.phone);
-    if (r.gender) $('f-gender').value = r.gender;
-    const got = [r.name&&'name', r.address&&'address', r.mapUrl&&'map link', r.area&&'locality', r.phone&&'phone'].filter(Boolean);
-    $('f-paste-msg').textContent = got.length ? `Filled ${got.join(', ')}. Now add the owner's number, rent, beds and commission.` : 'Could not read this. Paste the text you copied from Google Maps.';
+    const put = (id, v) => { if (v && $(id)) $(id).value = v; };
+    const show = () => {
+      put('f-name', r.name); put('f-addr', r.address); put('f-map', r.mapUrl); put('f-area', r.area); put('f-phone', r.phone);
+      if (r.gender && $('f-gender')) $('f-gender').value = r.gender;
+      const got = [r.name&&'name', r.address&&'address', r.mapUrl&&'map link', r.area&&'locality', r.phone&&'phone'].filter(Boolean);
+      if ($('f-paste-msg')) $('f-paste-msg').textContent = got.length ? `Filled ${got.join(', ')}. Now add the owner's number, rent, beds and commission.` : 'Could not read this. Paste the text you copied from Google Maps.';
+    };
+    show();
+    if (r.mapUrl && (!r.name || !r.address)) {
+      if ($('f-paste-msg')) $('f-paste-msg').textContent = 'Reading the PG name from the link…';
+      const x = await resolveMapsLink(r.mapUrl);
+      if (run !== pasteRun || !$('f-paste')) return;
+      if (!r.name && x.name) r.name = x.name;
+      if (!r.address && x.address) r.address = x.address;
+      const extra = parseMapsShare([r.name, r.address].filter(Boolean).join('\n'));
+      if (!r.area) r.area = extra.area;
+      if (!r.gender) r.gender = extra.gender;
+      show();
+      if (!r.name && $('f-paste-msg')) $('f-paste-msg').textContent = 'Got the map link, but Google did not share the name. Please type the PG name.';
+    }
   });
   const calc = () => { const c = commissionFor({ commType:V('f-ctype'), commValue:V('f-cval'), rent:V('f-rent') });
     $('c-calc').textContent = c!=null ? `You earn about ${rupee(Math.round(c))} per student${V('f-ctype')!=='Fixed ₹ per student'?' (on starting rent)':''}` : (V('f-ctype')!=='Fixed ₹ per student'&&V('f-cval')?'Add the rent to calculate your earning':''); };
