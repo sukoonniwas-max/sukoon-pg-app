@@ -305,14 +305,48 @@ const area = (id,label,val,ph='') => `<label class="full">${label}<textarea id="
 const sel = (id,label,opts,val,cls='') => `<label class="${cls}">${label}<select id="${id}">${opts.map(o=>`<option ${o===val?'selected':''}>${esc(o)}</option>`).join('')}</select></label>`;
 const V = id => $(id).value.trim();
 
+/* ---------- tap-to-select buttons ---------- */
+const FACILITIES = ['AC','WiFi','Food','Laundry','Washing machine','Housekeeping','CCTV','Power backup','RO water','Geyser','Fridge','TV','Study table','Wardrobe','Attached washroom','Lift','Parking','Gym','Biometric entry','Warden','Security guard'];
+const HOUSE_RULES = ['Gate closes 9 PM','Gate closes 10 PM','Gate closes 11 PM','No curfew','Visitors allowed','No visitors','No smoking','No alcohol','No cooking in rooms','Deposit refundable','ID proof required','Police verification'];
+const splitList = v => String(v||'').split(',').map(x=>x.trim()).filter(Boolean);
+function chips(id, label, options, value, multi=false, cls='full'){
+  const cur = multi ? splitList(value) : (value ? [String(value)] : []);
+  const opts = [...options, ...cur.filter(c=>!options.includes(c))];
+  return `<div class="${cls} chipfield"><span class="lbl">${label}</span><input type="hidden" id="${id}" value="${esc(cur.join(', '))}" data-multi="${multi?'1':''}">
+    <div class="chipset">${opts.map(o=>`<button type="button" class="chip" data-chip-for="${id}" data-v="${esc(o)}" aria-pressed="${cur.includes(o)}">${esc(o)}</button>`).join('')}</div></div>`;
+}
+function presets(id, values, fmt = v => v){
+  return `<div class="chipset presets full">${values.map(v=>`<button type="button" class="chip mini" data-preset-for="${id}" data-v="${esc(v)}">${esc(fmt(v))}</button>`).join('')}</div>`;
+}
+const kRs = v => '₹' + (v>=1000 ? (v/1000)+'k' : v);
+function dayStr(n){ const d = new Date(); d.setDate(d.getDate()+n); const z = x=>String(x).padStart(2,'0'); return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}`; }
+function datePresets(id){ const L = {0:'Today',1:'Tomorrow',3:'In 3 days',7:'Next week'}; return presets(id, [0,1,3,7].map(dayStr), v => L[[0,1,3,7].find(n=>dayStr(n)===v)]); }
+function quickAreas(){
+  const used = [...new Set([...S.pgs.map(p=>locOf(p.area)), ...S.inq.map(i=>locOf(i.area))].filter(l=>LOC_ZONE[l]))];
+  return [...new Set([...used, 'Rohini','Badli','Bawana Road (DTU)','Pitampura','Mukherjee Nagar','Laxmi Nagar','Kamla Nagar','Noida Sector 62'])].slice(0,8);
+}
+function setChip(id, v){
+  const inp = $(id); if (!inp) return;
+  inp.value = v;
+  const cur = inp.dataset.multi ? splitList(v) : [v];
+  document.querySelectorAll(`[data-chip-for="${id}"]`).forEach(b => b.setAttribute('aria-pressed', cur.includes(b.dataset.v)));
+  inp.dispatchEvent(new Event('input'));
+}
+function toggleChip(b){
+  const id = b.dataset.chipFor, inp = $(id), v = b.dataset.v;
+  if (inp.dataset.multi){ const cur = splitList(inp.value); const k = cur.indexOf(v); k>=0 ? cur.splice(k,1) : cur.push(v); setChip(id, cur.join(', ')); }
+  else setChip(id, inp.value===v ? '' : v);
+}
+
 function pgForm(p={}){
   const v = p.verify||{};
   openSheet(`<h2>${p.id?'Edit PG':'Add a PG'}</h2><form class="form" id="pg-form" onsubmit="return false">
     ${p.id?'':`<label class="full paste-box">Paste from Google Maps (optional)<textarea id="f-paste" placeholder="In Google Maps open the PG, tap Share, then Copy. Long-press here and Paste."></textarea></label><p class="note full earn" id="f-paste-msg"></p>`}
     <h4>Basics</h4>
     ${fld('f-name','PG name *',p.name,'text','full','required')}
-    ${sel('f-gender','For',GENDERS,p.gender||'Boys')}
-    ${fld('f-area','Area / locality',p.area,'text','','list="loc-list" placeholder="Pick or type, e.g. Rohini"')}
+    ${chips('f-gender','For',GENDERS,p.gender||'Boys')}
+    ${fld('f-area','Area / locality',p.area,'text','full','list="loc-list" placeholder="Pick or type, e.g. Rohini"')}
+    ${presets('f-area', quickAreas())}
     ${fld('f-metro','Nearest metro / college',p.metro,'text','full','placeholder="DTU, Rithala metro"')}
     <h4>Owner</h4>
     ${fld('f-owner','Owner / manager',p.owner)}
@@ -321,24 +355,30 @@ function pgForm(p={}){
     <h4>Charges</h4>
     ${fld('f-rent','Rent from (₹/mo)',p.rent,'number','','inputmode="numeric"')}
     ${fld('f-rentmax','Rent up to (₹/mo)',p.rentMax,'number','','inputmode="numeric"')}
-    ${fld('f-dep','Security deposit (₹)',p.deposit,'number','','inputmode="numeric"')}
+    ${presets('f-rent',[4000,5000,6000,7000,8000,10000,12000,15000],kRs)}
+    ${fld('f-dep','Security deposit (₹)',p.deposit,'number','full','inputmode="numeric"')}
+    ${presets('f-dep',[5000,7000,10000,15000,20000],kRs)}
     <h4>Your commission (agreed with owner)</h4>
-    ${sel('f-ctype','Commission type',CTYPES,p.commType||'Fixed ₹ per student')}
-    ${fld('f-cval','Amount / % / days',p.commValue ?? (num(p.commission)!=null?p.commission:''),'number','','inputmode="decimal" placeholder="e.g. 5000"')}
-    ${fld('f-cnote','Commission terms',p.commNote ?? (num(p.commission)==null?(p.commission||''):''),'text','full','placeholder="Paid after student completes 1 month"')}
+    ${chips('f-ctype','Commission type',CTYPES,p.commType||'Fixed ₹ per student')}
+    ${fld('f-cval','Amount / % / days',p.commValue ?? (num(p.commission)!=null?p.commission:''),'number','full','inputmode="decimal" placeholder="e.g. 5000"')}
+    ${presets('f-cval',[1000,2000,3000,5000,7500,10000,15,30,50])}
+    ${fld('f-cnote','Commission terms (optional)',p.commNote ?? (num(p.commission)==null?(p.commission||''):''),'text','full','placeholder="Paid after student completes 1 month"')}
     <p class="note full earn" id="c-calc"></p>
     <h4>Availability</h4>
     ${fld('f-total','Total beds',p.totalBeds,'number','','inputmode="numeric" min="0"')}
     ${fld('f-beds','Beds free now',p.beds,'number','','inputmode="numeric" min="0"')}
+    ${presets('f-beds',[0,1,2,3,4,5,10])}
     ${fld('f-from','Next vacancy from',p.availableFrom,'date','full')}
+    ${datePresets('f-from')}
     <h4>Rooms &amp; terms</h4>
-    ${area('f-rooms','Rooms & sharing',p.rooms,'Single ₹14k, Double ₹10k, Triple ₹8k')}
-    ${fld('f-food','Food',p.food,'text','full','placeholder="Veg, 3 meals included"')}
-    ${area('f-fac','Facilities',p.facilities,'AC, WiFi, laundry, CCTV, power backup')}
-    ${fld('f-lock','Lock-in',p.lockIn,'text','','placeholder="3 months"')}
-    ${fld('f-notice','Notice period',p.notice,'text','','placeholder="1 month"')}
-    ${fld('f-elec','Electricity & other charges',p.electricity,'text','full','placeholder="₹9/unit, separate meter"')}
-    ${area('f-terms','Other terms & conditions',p.terms,'Gate closes 10 pm, no visitors after 8 pm, deposit refundable…')}
+    ${chips('f-rooms','Rooms & sharing',['Single','Double','Triple','4+ sharing','AC rooms','Non-AC rooms','Attached washroom'],p.rooms,true)}
+    ${chips('f-food','Food',['Breakfast','Lunch','Dinner','Veg','Non-veg','No food'],p.food,true)}
+    ${chips('f-fac','Facilities',FACILITIES,p.facilities,true)}
+    ${chips('f-lock','Lock-in',['No lock-in','1 month','3 months','6 months','11 months'],p.lockIn)}
+    ${chips('f-notice','Notice period',['15 days','1 month','2 months'],p.notice)}
+    ${chips('f-elec','Electricity',['Included in rent','Separate meter','Fixed per month','₹8/unit','₹9/unit','₹10/unit'],p.electricity)}
+    ${chips('f-terms','House rules & terms',HOUSE_RULES,p.terms,true)}
+    ${fld('f-terms-x','Other terms (optional)','','text','full','placeholder="Anything not in the buttons"')}
     <h4>Location</h4>
     ${area('f-addr','Full address',p.address)}
     ${fld('f-map','Google Maps link',p.mapUrl,'url','full','placeholder="Paste share link, or leave blank to use address"')}
@@ -355,7 +395,7 @@ function pgForm(p={}){
     const bedsChanged = V('f-beds') !== String(p.beds ?? '');
     const data = { name:V('f-name'), gender:V('f-gender'), area:V('f-area'), metro:V('f-metro'), owner:V('f-owner'), phone:V('f-phone'), whatsapp:V('f-wa'),
       rent:V('f-rent'), rentMax:V('f-rentmax'), deposit:V('f-dep'), commType:V('f-ctype'), commValue:V('f-cval'), commNote:V('f-cnote'), commission:'', totalBeds:V('f-total'), beds:V('f-beds'), availableFrom:V('f-from'),
-      rooms:V('f-rooms'), food:V('f-food'), facilities:V('f-fac'), lockIn:V('f-lock'), notice:V('f-notice'), electricity:V('f-elec'), terms:V('f-terms'),
+      rooms:V('f-rooms'), food:V('f-food'), facilities:V('f-fac'), lockIn:V('f-lock'), notice:V('f-notice'), electricity:V('f-elec'), terms:[V('f-terms'),V('f-terms-x')].filter(Boolean).join(', '),
       address:V('f-addr'), mapUrl:V('f-map'), verify, notes:V('f-notes'),
       availConfirmedAt: (bedsChanged && V('f-beds')!=='') ? Date.now() : (p.availConfirmedAt||null),
       createdAt:p.createdAt||Date.now(), updatedAt:Date.now() };
@@ -372,7 +412,7 @@ function pgForm(p={}){
     const put = (id, v) => { if (v && $(id)) $(id).value = v; };
     const show = () => {
       put('f-name', r.name); put('f-addr', r.address); put('f-map', r.mapUrl); put('f-area', r.area); put('f-phone', r.phone);
-      if (r.gender && $('f-gender')) $('f-gender').value = r.gender;
+      if (r.gender && $('f-gender')) setChip('f-gender', r.gender);
       const got = [r.name&&'name', r.address&&'address', r.mapUrl&&'map link', r.area&&'locality', r.phone&&'phone'].filter(Boolean);
       if ($('f-paste-msg')) $('f-paste-msg').textContent = got.length ? `Filled ${got.join(', ')}. Now add the owner's number, rent, beds and commission.` : 'Could not read this. Paste the text you copied from Google Maps.';
     };
@@ -402,26 +442,33 @@ function inqForm(i={}){
     <h4>Customer</h4>
     ${fld('i-name','Student / parent name *',i.name,'text','full','required')}
     ${fld('i-phone','Phone / WhatsApp',i.phone,'tel','','inputmode="tel"')}
-    ${sel('i-source','Came from',SOURCES,i.source||'Instagram')}
+    ${chips('i-source','Came from',SOURCES,i.source||'Instagram')}
     ${fld('i-college','College / office',i.college,'text','full')}
     <h4>Requirement</h4>
-    ${sel('i-gender','PG category',['','Boys','Girls','Co-living'],i.gender||'')}
-    ${sel('i-sharing','Sharing',['','Single','Double','Triple','Any'],i.sharing||'')}
+    ${chips('i-gender','PG category',['Boys','Girls','Co-living'],i.gender||'')}
+    ${chips('i-sharing','Sharing',['Single','Double','Triple','Any'],i.sharing||'')}
     ${fld('i-area','Preferred locality',i.area,'text','full','list="loc-list" placeholder="Pick or type, e.g. Rohini"')}
+    ${presets('i-area', quickAreas())}
     ${fld('i-budget','Rent budget (₹/mo)',i.budget,'number','','inputmode="numeric"')}
     ${fld('i-dep','Deposit budget (₹)',i.depositBudget,'number','','inputmode="numeric"')}
-    ${fld('i-food','Food & amenities',i.food,'text','full','placeholder="Veg food, AC, WiFi"')}
+    <span class="lbl full" style="font-size:.77rem;color:var(--muted);font-weight:600">Rent budget</span>
+    ${presets('i-budget',[5000,6000,7000,8000,10000,12000,15000,20000],kRs)}
+    ${chips('i-food','Needs',['Veg food','Non-veg food','AC','WiFi','Attached washroom','Laundry','Near metro'],i.food,true)}
     ${fld('i-move','Move-in date',i.moveIn,'date','full')}
+    ${datePresets('i-move')}
     <h4>Progress</h4>
-    ${sel('i-status','Status',STATUSES,st,'full')}
+    ${chips('i-status','Status',STATUSES,st)}
     ${fld('i-follow','Follow-up date',i.followUp,'date')}
     ${fld('i-visit','Site visit date',i.visitDate,'date')}
+    <span class="lbl full" style="font-size:.77rem;color:var(--muted);font-weight:600">Follow-up</span>
+    ${datePresets('i-follow')}
     ${sel('i-pg','PG being visited / booked',['—',...S.pgs.map(p=>p.name)],(S.pgs.find(p=>p.id===i.pgId)||{}).name||'—','full')}
     ${fld('i-staff','Handled by',i.staff,'text','full','placeholder="Your name or team member"')}
     ${fld('i-lost','Lost reason (if lost)',i.lostReason,'text','full','placeholder="Budget too low, found elsewhere…"')}
+    ${presets('i-lost',['Budget too low','Found another PG','No reply','Location not suitable','Rooms full'])}
     <h4>Commission on this booking</h4>
     ${fld('i-comm','Amount (₹)',i.commAmount,'number','','inputmode="numeric" placeholder="Auto from PG"')}
-    ${sel('i-cstat','Status',['Not due','Pending','Received'],i.commStatus||'Not due')}
+    ${chips('i-cstat','Commission status',['Not due','Pending','Received'],i.commStatus||'Not due')}
     <p class="note full">When you mark the enquiry Booked, the amount fills in from the PG's agreed commission. You can change it.</p>
     ${area('i-notes','Notes & call log',i.notes,'12 Oct: called, wants AC single…')}
     </form><div id="del-zone"></div>
@@ -511,13 +558,14 @@ function findSheet(){
   openSheet(`<h2>Find PGs on Google Maps</h2>
     <p class="note">Google Maps opens with your search. When you find a good PG, open it, tap <b>Share</b>, then <b>Copy</b>. Come back here and tap <b>Add from Maps link</b>.</p>
     <form class="form" onsubmit="return false">
-      ${sel('g-for','Looking for',['Any','Boys','Girls','Co-living'],'Any')}
-      ${fld('g-area','Locality',startArea,'text','','list="loc-list" placeholder="Empty = near me"')}
-      ${fld('g-extra','Extra words (optional)','','text','full','placeholder="AC, food, near metro"')}
+      ${chips('g-for','Looking for',['Any','Boys','Girls','Co-living'],'Any')}
+      ${fld('g-area','Locality',startArea,'text','full','list="loc-list" placeholder="Empty = near me"')}
+      ${presets('g-area', quickAreas())}
+      ${chips('g-extra','Must have (optional)',['AC','Food','Near metro','Single room','Attached washroom'],'',true)}
     </form>
     <div class="sheet-foot"><button class="btn" id="sheet-cancel">Close</button><a class="btn primary" id="g-go" href="#" target="_blank" rel="noopener">Search</a></div>`);
   const upd = () => {
-    const g = V('g-for'), a = V('g-area'), x = V('g-extra');
+    const g = V('g-for') || 'Any', a = V('g-area'), x = V('g-extra').replace(/,/g,'');
     const q = [g==='Any' ? '' : g==='Co-living' ? 'co-living' : g.toLowerCase(), 'PG', x, a ? `in ${a}, Delhi NCR` : 'near me'].filter(Boolean).join(' ');
     $('g-go').href = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
     $('g-go').textContent = `Search “${q}”`;
@@ -564,6 +612,8 @@ document.addEventListener('click', async e => {
   const t = e.target.closest('button,a'); if (!t) { if (e.target.id==='sheet-bg') closeSheet(); return; }
   if (t.getAttribute('aria-disabled')==='true'){ e.preventDefault(); return; }
   if (t.id==='sheet-cancel') return closeSheet();
+  if (t.dataset.chipFor) { toggleChip(t); return; }
+  if (t.dataset.presetFor) { const el = $(t.dataset.presetFor); if (el) { el.value = t.dataset.v; el.dispatchEvent(new Event('input')); } return; }
   if (t.dataset.fp) { S.fP=t.dataset.fp; render(); }
   if (t.dataset.fi) { S.fI=t.dataset.fi; render(); }
   if (t.dataset.go) { const [tab,f]=t.dataset.go.split(':'); S.tab=tab; if (tab==='pgs') S.fP=f; else S.fI=f; render(); window.scrollTo(0,0); }

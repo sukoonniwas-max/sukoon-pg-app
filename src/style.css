@@ -163,3 +163,10 @@ textarea{min-height:70px;resize:vertical}
 
 .tool-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .paste-box textarea{min-height:64px;background:var(--marigold-soft);border-color:var(--marigold)}
+
+.chipfield{display:flex;flex-direction:column;gap:6px;min-width:0}
+.chipfield .lbl{font-size:.77rem;font-weight:600;color:var(--muted);letter-spacing:.02em}
+.chipset{display:flex;flex-wrap:wrap;gap:6px}
+.chipset .chip{padding:8px 12px}
+.chipset .chip.mini{padding:5px 10px;font-size:.78rem;background:var(--bg)}
+.presets{margin-top:-4px}
