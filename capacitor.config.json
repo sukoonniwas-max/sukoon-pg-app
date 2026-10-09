@@ -1,0 +1,8 @@
+{
+  "appId": "com.sukoon.pgnetwork",
+  "appName": "Sukoon PG",
+  "webDir": "dist",
+  "android": {
+    "backgroundColor": "#0e6b63"
+  }
+}
