@@ -7,7 +7,7 @@ import {
 } from 'firebase/auth';
 import {
   initializeFirestore, persistentLocalCache, persistentSingleTabManager,
-  collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch,
+  collection, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch,
 } from 'firebase/firestore';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
@@ -32,7 +32,8 @@ function makeDb(userId) {
       return {
         doc(id) {
           const r = id ? doc(c, id) : doc(c);
-          return { id: r.id, set: d => setDoc(r, d), update: d => updateDoc(r, d), delete: () => deleteDoc(r) };
+          return { id: r.id, set: d => setDoc(r, d), update: d => updateDoc(r, d), delete: () => deleteDoc(r),
+            get: async () => { const d = await getDoc(r); return { exists: d.exists(), data: () => d.data() }; } };
         },
         onSnapshot(next, err) {
           return onSnapshot(c,

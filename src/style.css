@@ -170,3 +170,6 @@ textarea{min-height:70px;resize:vertical}
 .chipset .chip{padding:8px 12px}
 .chipset .chip.mini{padding:5px 10px;font-size:.78rem;background:var(--bg)}
 .presets{margin-top:-4px}
+
+button.badge{font:inherit;font-size:.78rem;background:var(--surface);cursor:pointer;text-align:left}
+.badge.warnb{border-color:var(--warn);color:var(--warn);background:var(--warn-soft)}

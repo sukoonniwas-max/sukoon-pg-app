@@ -62,6 +62,11 @@ function commLabel(p){
   const base = v==null ? (p.commission||'') : p.commType==='% of 1 month rent' ? `${v}% of 1 month rent` : p.commType==='Days of rent' ? `${v} days of rent` : `${rupee(v)} per student`;
   return [base, (v!=null && c!=null && p.commType && p.commType!=='Fixed ₹ per student') ? `about ${rupee(Math.round(c))} per student` : '', p.commNote].filter(Boolean).join(' · ') || '—';
 }
+function commBase(p){
+  const v = num(p.commValue);
+  return v==null ? (p.commission||'') : p.commType==='% of 1 month rent' ? `${v}% of 1 month rent` : p.commType==='Days of rent' ? `${v} days of rent` : `${rupee(v)} per student`;
+}
+const agrState = p => !p.agreement ? 'none' : p.agreement.status==='Confirmed' ? 'confirmed' : 'sent';
 const isVerified = p => !!(p.verify && (p.verify.info || p.verify.visit));
 const S = { tab:'pgs', pgs:[], inq:[], qP:'', qI:'', fP:'All', fI:'Open', fLoc:'', db:null, dl:null, canWrite:true, loaded:false };
 const $ = id => document.getElementById(id);
@@ -155,7 +160,7 @@ function renderChips(){
   ls.innerHTML = `<option value="">All localities in Delhi NCR (${S.pgs.length})</option>` + ZONES.filter(z=>zones[z]&&zones[z].length).map(z=>
     `<optgroup label="${esc(z)}"><option value="zone:${esc(z)}">All of ${esc(z)} (${zoneCount(z)})</option>${zones[z].map(l=>`<option value="loc:${esc(l)}">${esc(l)} (${counts[l]||0})</option>`).join('')}</optgroup>`).join('');
   ls.value = S.fLoc; if (ls.value !== S.fLoc) S.fLoc = '';
-  const pOpts = ['All','Available','Needs reconfirm','Verified',...GENDERS];
+  const pOpts = ['All','Available','Needs reconfirm','Verified','Agreement confirmed','Waiting for owner','No agreement',...GENDERS];
   $('chips-pgs').innerHTML = pOpts.map(o=>`<button class="chip" aria-pressed="${S.fP===o}" data-fp="${esc(o)}">${esc(o)}</button>`).join('');
   $('chips-inq').innerHTML = Object.keys(INQ_FILTERS).map(o=>`<button class="chip" aria-pressed="${S.fI===o}" data-fi="${esc(o)}">${esc(o)}<span class="c">${S.inq.filter(INQ_FILTERS[o]).length}</span></button>`).join('');
 }
@@ -170,6 +175,9 @@ function renderPGs(){
   if (S.fP==='Available') rows = rows.filter(p=>num(p.beds)>0);
   else if (S.fP==='Needs reconfirm') rows = rows.filter(isStale);
   else if (S.fP==='Verified') rows = rows.filter(isVerified);
+  else if (S.fP==='Agreement confirmed') rows = rows.filter(p=>agrState(p)==='confirmed');
+  else if (S.fP==='Waiting for owner') rows = rows.filter(p=>agrState(p)==='sent');
+  else if (S.fP==='No agreement') rows = rows.filter(p=>agrState(p)==='none');
   else if (GENDERS.includes(S.fP)) rows = rows.filter(p=>p.gender===S.fP);
   if (S.fLoc) rows = rows.filter(p=>locMatch(p.area, S.fLoc));
   rows.sort((a,b)=>(num(b.beds)>0)-(num(a.beds)>0) || String(a.area).localeCompare(String(b.area)) || String(a.name).localeCompare(String(b.name)));
@@ -184,6 +192,7 @@ function renderPGs(){
       <div class="money"><div><small>Rent / mo</small><strong>${rupee(p.rent)}${num(p.rentMax)?'+':''}</strong></div><div><small>Deposit</small><strong>${rupee(p.deposit)}</strong></div><div><small>You earn / student</small><strong class="earn">${commissionFor(p)!=null?rupee(Math.round(commissionFor(p))):(p.commission&&num(p.commission)==null?esc(p.commission):'—')}</strong></div></div>
       ${stale?`<div class="warnline">Availability ${p.availConfirmedAt?'last confirmed '+ago(p.availConfirmedAt):'never confirmed'}. Reconfirm with owner before sharing.</div>`:`<div class="note">Availability confirmed ${ago(p.availConfirmedAt)}${p.availableFrom?' · next vacancy '+fmtD(dateMs(p.availableFrom)):''}</div>`}
       ${verifyBadges(p)}
+      <div class="badges">${agrBadge(p)}</div>
       <div class="phone"><span>${esc(p.owner||'Owner')} · <span class="num">${esc(p.phone||'no number')}</span></span>${p.phone?`<button class="copy" data-copy="${esc(p.phone)}">Copy</button>`:''}</div>
       <div class="actions">
         <a class="btn wa" href="${esc(wa)}" target="_blank" rel="noopener" aria-disabled="${!wa}">${ICON.wa}<span class="lbl">WhatsApp</span></a>
@@ -282,6 +291,7 @@ function renderDash(){
     </div></div>
     <div><h2>Commission</h2><div class="tiles">
       ${tile(rupee(commRecv),'Received from owners','good sm','inq:Booked')}${tile(rupee(commPend),'Pending from owners',commPend?'hot sm':'sm','inq:Booked')}${tile(rupee(pipe),'Expected from visits & pending bookings','sm')}
+      ${tile(S.pgs.filter(p=>agrState(p)==='confirmed').length,'Agreements confirmed','good','pgs:Agreement confirmed')}${tile(S.pgs.filter(p=>agrState(p)==='sent').length,'Waiting for owner OK',S.pgs.some(p=>agrState(p)==='sent')?'hot':'','pgs:Waiting for owner')}${tile(S.pgs.filter(p=>agrState(p)==='none').length,'No agreement yet','','pgs:No agreement')}
     </div>${avgComm!=null?`<p class="note" style="margin-top:6px">Average agreed commission: ${rupee(Math.round(avgComm))} per student.</p>`:''}</div>
     <div><h2>Localities in Delhi NCR</h2>${locHtml?`<div class="loclist">${locHtml}</div><p class="note" style="margin-top:6px">Tap a locality to see its PGs.</p>`:'<p class="note">Add an area to your PGs and enquiries to see localities here.</p>'}</div>
     ${bars('Enquiries by source', bySrc)}
@@ -304,6 +314,124 @@ const fld = (id,label,val,type='text',cls='',extra='') => `<label class="${cls}"
 const area = (id,label,val,ph='') => `<label class="full">${label}<textarea id="${id}" placeholder="${esc(ph)}">${esc(val??'')}</textarea></label>`;
 const sel = (id,label,opts,val,cls='') => `<label class="${cls}">${label}<select id="${id}">${opts.map(o=>`<option ${o===val?'selected':''}>${esc(o)}</option>`).join('')}</select></label>`;
 const V = id => $(id).value.trim();
+
+/* ---------- commission agreement with the PG owner ---------- */
+function agrBadge(p){
+  const a = p.agreement, st = agrState(p);
+  if (st==='confirmed') return `<button type="button" class="badge on" data-agr="${esc(p.id)}">✓ Commission agreement confirmed · ${fmtD(a.confirmedAt)}${a.hasProof?' · proof saved':''}</button>`;
+  if (st==='sent') return `<button type="button" class="badge warnb" data-agr="${esc(p.id)}">Agreement sent ${fmtD(a.sentAt)} · waiting for owner</button>`;
+  return `<button type="button" class="badge" data-agr="${esc(p.id)}">+ Send commission agreement</button>`;
+}
+function agrText(p, a){
+  const d = new Date(a.sentAt || Date.now()).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+  const rent = num(p.rent)!=null ? `${rupee(p.rent)}${num(p.rentMax)?' – '+rupee(p.rentMax):''} per month` : '';
+  const charges = [rent && 'Rent ' + rent, num(p.deposit)!=null && 'Deposit ' + rupee(p.deposit)].filter(Boolean).join(', ');
+  const amount = a.amount!=null ? `${rupee(a.amount)} per student` : a.label;
+  const extra = a.amount!=null && a.label && a.label !== `${rupee(a.amount)} per student` ? ` (${a.label})` : '';
+  let n = 0; const pt = t => `${++n}. ${t}`;
+  return [
+    '*Sukoon PG Network – Commission Agreement*',
+    `Agreement ID: ${a.id}`, `Date: ${d}`, '',
+    `PG: ${p.name}${p.area ? ', ' + p.area : ''}`,
+    `Owner: ${p.owner || '—'}${p.phone ? ' (' + p.phone + ')' : ''}`, '',
+    'We agree that:',
+    pt('Sukoon PG Network will refer students to your PG.'),
+    pt(`For every student who books and moves in through Sukoon PG Network, you will pay a commission of *${amount}*${extra}.`),
+    pt(`Payment: ${p.commNote || 'within 7 days of the student moving in'}.`),
+    charges ? pt(`Charges we will share with students: ${charges}.`) : '',
+    pt('You will inform us when beds become full or free.'), '',
+    `To confirm, please reply: *I AGREE ${a.id}*`,
+    `पुष्टि के लिए जवाब दें: *I AGREE ${a.id}*`,
+  ].filter((l, i, arr) => l !== '' || (arr[i-1] !== '' && i > 0)).join('\n');
+}
+function shrinkImage(file){
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => { const im = new Image();
+      im.onload = () => { const k = Math.min(1, 900 / Math.max(im.width, im.height)); const c = document.createElement('canvas');
+        c.width = Math.round(im.width * k); c.height = Math.round(im.height * k); c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+        let out = c.toDataURL('image/jpeg', 0.6); if (out.length > 700000) out = c.toDataURL('image/jpeg', 0.4); resolve(out); };
+      im.onerror = reject; im.src = fr.result; };
+    fr.onerror = reject; fr.readAsDataURL(file);
+  });
+}
+function agreementSheet(pgId, forceNew){
+  const p = S.pgs.find(x => x.id === pgId); if (!p) return;
+  const amt = commissionFor(p), amount = amt!=null ? Math.round(amt) : null, label = commBase(p);
+  const old = p.agreement;
+  const confirmed = old && old.status === 'Confirmed' && !forceNew;
+  const a = confirmed ? old : { id: (old && old.status !== 'Confirmed' && old.id) || ('AGR-' + Math.random().toString(36).slice(2,6).toUpperCase()), amount, label, status: (old && old.status !== 'Confirmed') ? old.status : 'Draft', sentAt: (old && old.status !== 'Confirmed' && old.sentAt) || null };
+  if (!confirmed && amount==null && !label){
+    openSheet(`<h2>Commission agreement</h2><p class="note">First add the commission you agreed with ${esc(p.owner||'the owner')}. Open the PG, tap <b>Edit</b>, and fill <b>Your commission</b>.</p>
+      <div class="sheet-foot"><button class="btn" id="sheet-cancel">Close</button><button class="btn primary" data-editpg="${esc(p.id)}">Edit PG</button></div>`);
+    return;
+  }
+  const text = confirmed ? (old.text || agrText(p, old)) : agrText(p, a);
+  const ownerNum = p.whatsapp || p.phone;
+  const changed = confirmed && old.amount != null && amount != null && old.amount !== amount;
+  openSheet(`<h2>Commission agreement</h2>
+    <div class="code">${esc(a.id)} · ${esc(p.name)}</div>
+    ${confirmed ? `<div class="note earn" style="margin-top:8px">✓ Confirmed by owner on ${fmtDT(old.confirmedAt)}</div>`
+      : a.status === 'Sent' ? `<div class="warnline" style="margin-top:8px">Sent ${fmtDT(a.sentAt)}. Waiting for the owner to reply “I AGREE ${esc(a.id)}”.</div>` : ''}
+    ${changed ? `<div class="badline" style="margin-top:8px">Commission changed since this was agreed (${rupee(old.amount)} → ${rupee(amount)}). Make a new agreement.</div>` : ''}
+    <div class="preview" style="max-height:260px">${esc(text)}</div>
+    ${confirmed ? `
+      ${old.reply ? `<p class="note"><b>Owner's reply:</b> ${esc(old.reply)}</p>` : ''}
+      <div id="proof-zone">${old.hasProof ? '<p class="note">Loading proof…</p>' : '<p class="note">No screenshot saved.</p>'}</div>
+      <div class="sheet-foot"><button class="btn" id="sheet-cancel">Close</button><button class="btn" id="agr-copy">Copy</button><button class="btn" id="agr-new">Make new agreement</button></div>`
+    : `
+      <div class="sheet-foot" style="justify-content:stretch">
+        <a class="btn wa" id="agr-wa" href="${esc(waLink(ownerNum, text) || '#')}" target="_blank" rel="noopener" aria-disabled="${!waLink(ownerNum, text)}" style="flex:1">${ICON.wa}Send to ${esc(p.owner || 'owner')}</a>
+        <a class="btn" id="agr-any" href="${esc(waAny(text))}" target="_blank" rel="noopener">Pick chat</a>
+        <button class="btn" id="agr-copy">Copy</button>
+      </div>
+      ${ownerNum ? '' : '<p class="note">No owner number saved. Use “Pick chat”, or add the number in Edit.</p>'}
+      <h4 style="margin-top:18px">Owner confirmed?</h4>
+      <p class="note">When the owner replies “I AGREE ${esc(a.id)}” on WhatsApp, save it here as proof.</p>
+      <form class="form" onsubmit="return false">
+        <label class="full">Owner's reply (copy from WhatsApp and paste)<textarea id="agr-reply" placeholder="I AGREE ${esc(a.id)}"></textarea></label>
+        <label class="full">Screenshot of the reply<input type="file" id="agr-shot" accept="image/*"></label>
+        <div class="full" id="agr-preview"></div>
+      </form>
+      <div class="sheet-foot"><button class="btn" id="sheet-cancel">Close</button><button class="btn primary" id="agr-confirm">Save as confirmed</button></div>`}`);
+
+  const ref = S.db.collection('pgs').doc(p.id);
+  $('agr-copy').onclick = () => copy(text);
+  const markSent = to => { if (confirmed) return; const upd = { ...a, text, status:'Sent', sentAt: Date.now(), sentTo: to }; ref.update({ agreement: upd, updatedAt: Date.now() }).catch(()=>toast('Opened WhatsApp, but could not save the sent status')); };
+  if ($('agr-wa')) $('agr-wa').addEventListener('click', () => markSent('owner'));
+  if ($('agr-any')) $('agr-any').addEventListener('click', () => markSent('chat'));
+  if ($('agr-new')) $('agr-new').onclick = () => agreementSheet(p.id, true);
+
+  if (confirmed && old.hasProof) {
+    S.db.collection('proofs').doc(p.id).get().then(d => {
+      const z = $('proof-zone'); if (!z) return;
+      const img = d.exists && d.data().image;
+      z.innerHTML = img ? `<p class="note"><b>Proof screenshot</b></p><img src="${img}" alt="Owner's WhatsApp reply" style="border-radius:10px;border:1px solid var(--line);margin-top:6px">` : '<p class="note">Proof not found.</p>';
+    }).catch(() => { if ($('proof-zone')) $('proof-zone').innerHTML = '<p class="note">Could not load the proof. Check your connection.</p>'; });
+  }
+
+  let shot = null;
+  if ($('agr-shot')) $('agr-shot').onchange = async e => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    try { shot = await shrinkImage(f); $('agr-preview').innerHTML = `<img src="${shot}" alt="Screenshot preview" style="border-radius:10px;border:1px solid var(--line);max-height:220px">`; }
+    catch (err) { shot = null; toast('Could not read this image'); }
+  };
+  if ($('agr-confirm')) $('agr-confirm').onclick = async () => {
+    const reply = V('agr-reply');
+    if (!reply && !shot) { toast('Paste the reply or add a screenshot as proof'); return; }
+    if (reply && !shot && !/agree|ok|haan|yes|confirm|theek|thik|done/i.test(reply) && !$('agr-confirm').dataset.warned) {
+      $('agr-confirm').dataset.warned = '1'; $('agr-confirm').textContent = 'Save anyway';
+      toast('This reply doesn\'t look like a yes. Check it, then tap Save anyway.'); return;
+    }
+    const now = Date.now();
+    const agreement = { ...a, text, status:'Confirmed', sentAt: a.sentAt || now, confirmedAt: now, reply, hasProof: !!shot };
+    try {
+      if (shot) S.db.collection('proofs').doc(p.id).set({ image: shot, reply, agreementId: a.id, at: now });
+      ref.update({ agreement, updatedAt: now });
+      closeSheet(); toast('Agreement confirmed and proof saved');
+    } catch (err) { toast('Could not save. Try again.'); }
+  };
+}
 
 /* ---------- tap-to-select buttons ---------- */
 const FACILITIES = ['AC','WiFi','Food','Laundry','Washing machine','Housekeeping','CCTV','Power backup','RO water','Geyser','Fridge','TV','Study table','Wardrobe','Attached washroom','Lift','Parking','Gym','Biometric entry','Warden','Security guard'];
@@ -396,7 +524,7 @@ function pgForm(p={}){
     const data = { name:V('f-name'), gender:V('f-gender'), area:V('f-area'), metro:V('f-metro'), owner:V('f-owner'), phone:V('f-phone'), whatsapp:V('f-wa'),
       rent:V('f-rent'), rentMax:V('f-rentmax'), deposit:V('f-dep'), commType:V('f-ctype'), commValue:V('f-cval'), commNote:V('f-cnote'), commission:'', totalBeds:V('f-total'), beds:V('f-beds'), availableFrom:V('f-from'),
       rooms:V('f-rooms'), food:V('f-food'), facilities:V('f-fac'), lockIn:V('f-lock'), notice:V('f-notice'), electricity:V('f-elec'), terms:[V('f-terms'),V('f-terms-x')].filter(Boolean).join(', '),
-      address:V('f-addr'), mapUrl:V('f-map'), verify, notes:V('f-notes'),
+      address:V('f-addr'), mapUrl:V('f-map'), verify, notes:V('f-notes'), agreement: p.agreement || null,
       availConfirmedAt: (bedsChanged && V('f-beds')!=='') ? Date.now() : (p.availConfirmedAt||null),
       createdAt:p.createdAt||Date.now(), updatedAt:Date.now() };
     if (!p.id){ const dupe = S.pgs.find(x=>(x.name||'').toLowerCase()===data.name.toLowerCase() || (last10(data.phone) && last10(x.phone)===last10(data.phone) && (x.area||'').toLowerCase()===data.area.toLowerCase()));
@@ -593,7 +721,9 @@ async function exportData(kind){
       ['Rent from',p=>p.rent],['Rent up to',p=>p.rentMax],['Deposit',p=>p.deposit],['Total beds',p=>p.totalBeds],['Beds free',p=>p.beds],['Availability confirmed',p=>p.availConfirmedAt?new Date(p.availConfirmedAt).toLocaleDateString('en-IN'):''],
       ['Next vacancy',p=>p.availableFrom],['Rooms',p=>p.rooms],['Food',p=>p.food],['Facilities',p=>p.facilities],['Lock-in',p=>p.lockIn],['Notice',p=>p.notice],['Electricity',p=>p.electricity],['Terms',p=>p.terms],
       ['Locality',p=>locOf(p.area)],['Zone',p=>p.area?zoneOf(p.area):''],['Address',p=>p.address],['Map',p=>mapLink(p)],
-      ['Commission type',p=>p.commType||''],['Commission value',p=>p.commValue ?? p.commission ?? ''],['Commission ₹ per student',p=>{ const c = commissionFor(p); return c!=null ? Math.round(c) : ''; }],['Commission terms',p=>p.commNote||''],...VERIFY.map(([k,l])=>[l,p=>(p.verify||{})[k]?new Date(p.verify[k]).toLocaleDateString('en-IN'):''])])
+      ['Commission type',p=>p.commType||''],['Commission value',p=>p.commValue ?? p.commission ?? ''],['Commission ₹ per student',p=>{ const c = commissionFor(p); return c!=null ? Math.round(c) : ''; }],['Commission terms',p=>p.commNote||''],
+      ['Agreement',p=>({none:'Not sent',sent:'Waiting for owner',confirmed:'Confirmed'})[agrState(p)]],['Agreement ID',p=>(p.agreement||{}).id||''],
+      ['Agreed ₹ per student',p=>(p.agreement||{}).amount ?? ''],['Agreement confirmed on',p=>(p.agreement||{}).confirmedAt?new Date(p.agreement.confirmedAt).toLocaleDateString('en-IN'):''],...VERIFY.map(([k,l])=>[l,p=>(p.verify||{})[k]?new Date(p.verify[k]).toLocaleDateString('en-IN'):''])])
     : csv(S.inq, [['Enquiry ID',i=>i.code],['Received',i=>i.createdAt?new Date(i.createdAt).toLocaleString('en-IN'):''],['Name',i=>i.name],['Phone',i=>i.phone],['Source',i=>i.source],['College',i=>i.college],
       ['Category',i=>i.gender],['Sharing',i=>i.sharing],['Area',i=>i.area],['Rent budget',i=>i.budget],['Deposit budget',i=>i.depositBudget],['Food',i=>i.food],['Move-in',i=>i.moveIn],
       ['Status',i=>status(i)],['Follow-up',i=>i.followUp],['Visit',i=>i.visitDate],['PG',i=>(S.pgs.find(p=>p.id===i.pgId)||{}).name||''],['Handled by',i=>i.staff],['Lost reason',i=>i.lostReason],['Commission ₹',i=>i.commAmount],['Commission status',i=>i.commStatus],['Times shared',i=>(i.shares||[]).length],['Notes',i=>i.notes]]);
@@ -612,6 +742,7 @@ document.addEventListener('click', async e => {
   const t = e.target.closest('button,a'); if (!t) { if (e.target.id==='sheet-bg') closeSheet(); return; }
   if (t.getAttribute('aria-disabled')==='true'){ e.preventDefault(); return; }
   if (t.id==='sheet-cancel') return closeSheet();
+  if (t.dataset.agr) { agreementSheet(t.dataset.agr); return; }
   if (t.dataset.chipFor) { toggleChip(t); return; }
   if (t.dataset.presetFor) { const el = $(t.dataset.presetFor); if (el) { el.value = t.dataset.v; el.dispatchEvent(new Event('input')); } return; }
   if (t.dataset.fp) { S.fP=t.dataset.fp; render(); }
