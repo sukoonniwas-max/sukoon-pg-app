@@ -307,6 +307,7 @@ const V = id => $(id).value.trim();
 function pgForm(p={}){
   const v = p.verify||{};
   openSheet(`<h2>${p.id?'Edit PG':'Add a PG'}</h2><form class="form" id="pg-form" onsubmit="return false">
+    ${p.id?'':`<label class="full paste-box">Paste from Google Maps (optional)<textarea id="f-paste" placeholder="In Google Maps open the PG, tap Share, then Copy. Long-press here and Paste."></textarea></label><p class="note full earn" id="f-paste-msg"></p>`}
     <h4>Basics</h4>
     ${fld('f-name','PG name *',p.name,'text','full','required')}
     ${sel('f-gender','For',GENDERS,p.gender||'Boys')}
@@ -362,6 +363,15 @@ function pgForm(p={}){
         $('pg-force').onclick = () => { $('pg-save').dataset.force='1'; $('pg-save').click(); }; return; } }
     await save(S.db.collection('pgs').doc(p.id||undefined), data, 'PG saved');
   };
+  const pb = $('f-paste');
+  if (pb) pb.addEventListener('input', () => {
+    const r = parseMapsShare(pb.value);
+    const put = (id, v) => { if (v) $(id).value = v; };
+    put('f-name', r.name); put('f-addr', r.address); put('f-map', r.mapUrl); put('f-area', r.area); put('f-phone', r.phone);
+    if (r.gender) $('f-gender').value = r.gender;
+    const got = [r.name&&'name', r.address&&'address', r.mapUrl&&'map link', r.area&&'locality', r.phone&&'phone'].filter(Boolean);
+    $('f-paste-msg').textContent = got.length ? `Filled ${got.join(', ')}. Now add the owner's number, rent, beds and commission.` : 'Could not read this. Paste the text you copied from Google Maps.';
+  });
   const calc = () => { const c = commissionFor({ commType:V('f-ctype'), commValue:V('f-cval'), rent:V('f-rent') });
     $('c-calc').textContent = c!=null ? `You earn about ${rupee(Math.round(c))} per student${V('f-ctype')!=='Fixed ₹ per student'?' (on starting rent)':''}` : (V('f-ctype')!=='Fixed ₹ per student'&&V('f-cval')?'Add the rent to calculate your earning':''); };
   ['f-ctype','f-cval','f-rent'].forEach(id=>$(id).addEventListener('input', calc)); calc();
@@ -462,6 +472,42 @@ async function save(ref, data, msg){
   catch(e){ toast('Could not save: ' + (e && e.code === 'permission-denied' ? 'not allowed. Check Firestore rules.' : 'check your connection.')); }
 }
 
+
+/* ---------- Google Maps: search and paste ---------- */
+function parseMapsShare(text){
+  const t = String(text||'');
+  const url = (t.match(/https?:\/\/\S+/)||[''])[0];
+  const phoneM = t.match(/(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}/);
+  const phone = phoneM ? digits(phoneM[0]).slice(-10) : '';
+  const lines = t.split(/\r?\n/).map(x=>x.trim()).filter(x=>x && !/https?:\/\//.test(x) && !(phoneM && x.includes(phoneM[0])));
+  let name = lines[0] || '', address = lines.slice(1).join(', ');
+  if (!address && name.includes(',')) { const i = name.indexOf(','); address = name.slice(i+1).trim(); name = name.slice(0,i).trim(); }
+  if (!name && url) { const m = url.match(/\/place\/([^/@?]+)/); if (m) { try { name = decodeURIComponent(m[1].replace(/\+/g,' ')); } catch(e){} } }
+  const loc = locOf(address || name);
+  const area = LOC_ZONE[loc] ? loc : '';
+  const g = /girl/i.test(name) ? 'Girls' : /boy/i.test(name) ? 'Boys' : /co-?living|unisex/i.test(name) ? 'Co-living' : '';
+  return { name, address, mapUrl:url, phone, area, gender:g };
+}
+function findSheet(){
+  const startArea = S.fLoc && S.fLoc.startsWith('loc:') ? S.fLoc.slice(4) : '';
+  openSheet(`<h2>Find PGs on Google Maps</h2>
+    <p class="note">Google Maps opens with your search. When you find a good PG, open it, tap <b>Share</b>, then <b>Copy</b>. Come back here and tap <b>Add from Maps link</b>.</p>
+    <form class="form" onsubmit="return false">
+      ${sel('g-for','Looking for',['Any','Boys','Girls','Co-living'],'Any')}
+      ${fld('g-area','Locality',startArea,'text','','list="loc-list" placeholder="Empty = near me"')}
+      ${fld('g-extra','Extra words (optional)','','text','full','placeholder="AC, food, near metro"')}
+    </form>
+    <div class="sheet-foot"><button class="btn" id="sheet-cancel">Close</button><a class="btn primary" id="g-go" href="#" target="_blank" rel="noopener">Search</a></div>`);
+  const upd = () => {
+    const g = V('g-for'), a = V('g-area'), x = V('g-extra');
+    const q = [g==='Any' ? '' : g==='Co-living' ? 'co-living' : g.toLowerCase(), 'PG', x, a ? `in ${a}, Delhi NCR` : 'near me'].filter(Boolean).join(' ');
+    $('g-go').href = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
+    $('g-go').textContent = `Search “${q}”`;
+  };
+  ['g-for','g-area','g-extra'].forEach(id => { $(id).addEventListener('input', upd); $(id).addEventListener('change', upd); });
+  upd();
+}
+
 /* ---------- export ---------- */
 function csv(rows, cols){
   const cell = v => { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; };
@@ -505,6 +551,8 @@ document.addEventListener('click', async e => {
   if (t.dataset.go) { const [tab,f]=t.dataset.go.split(':'); S.tab=tab; if (tab==='pgs') S.fP=f; else S.fI=f; render(); window.scrollTo(0,0); }
   if (t.dataset.loc) { S.tab='pgs'; S.fLoc=t.dataset.loc; S.fP='All'; render(); window.scrollTo(0,0); }
   if (t.id==='import-btn') $('import-file').click();
+  if (t.id==='find-btn') { findSheet(); return; }
+  if (t.id==='addmaps-btn') { if (S.db) pgForm(); else toast('Sign in first'); return; }
   if (t.id==='signout-btn') { signOutUser(); return; }
   if (t.dataset.copy) copy(t.dataset.copy);
   if (t.dataset.export) exportData(t.dataset.export);

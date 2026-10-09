@@ -126,15 +126,21 @@ export function initAuth({ onSignedIn, onSignedOut }) {
   $('auth-form').onsubmit = async e => {
     e.preventDefault();
     const email = $('auth-email').value.trim(), pass = $('auth-pass').value;
-    $('auth-go').disabled = true; $('auth-msg').textContent = '';
+    const label = $('auth-go').textContent;
+    $('auth-go').disabled = true; $('auth-go').textContent = 'Please wait…'; $('auth-msg').textContent = '';
+    const slow = setTimeout(() => { $('auth-msg').textContent = 'Still trying… check your internet connection.'; }, 15000);
     try {
       if (mode === 'signin') await signInWithEmailAndPassword(auth, email, pass);
       else await createUserWithEmailAndPassword(auth, email, pass);
     } catch (err) { $('auth-msg').textContent = msg(err); }
-    finally { $('auth-go').disabled = false; }
+    finally { clearTimeout(slow); $('auth-go').disabled = false; $('auth-go').textContent = label; }
   };
   onAuthStateChanged(auth, user => {
-    if (user) { uid = user.uid; box.hidden = true; onSignedIn(makeDb(user.uid), user.email); }
+    if (user) {
+      uid = user.uid; box.hidden = true;
+      try { onSignedIn(makeDb(user.uid), user.email); }
+      catch (e) { box.hidden = false; $('auth-msg').textContent = 'Signed in, but the app could not open: ' + ((e && e.message) || e); }
+    }
     else { uid = null; box.hidden = false; $('auth-pass').value = ''; onSignedOut(); }
   });
 }
