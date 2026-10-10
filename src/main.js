@@ -642,7 +642,7 @@ function dealerForm(d={}){
   $('d-save').onclick = async () => {
     if (!V('d-name')) { $('d-name').focus(); toast('Add the dealer name'); return; }
     if (digits(V('d-phone')).length < 10) { $('d-phone').focus(); toast('Add a 10-digit number'); return; }
-    const extra = V('d-area-x') ? [locOf(V('d-area-x'))] : [];
+    const extra = V('d-area-x') ? [V('d-area-x').replace(/\s+/g,' ')] : [];
     const areas = [...splitList(V('d-areas')), ...extra].filter((x,i,a)=>x && a.indexOf(x)===i).join(', ');
     if (!d.id) { const dupe = S.deals.find(x=>last10(x.phone)===last10(V('d-phone'))); if (dupe && !$('d-save').dataset.force) { $('del-zone').innerHTML = `<div class="dup"><span>This number is already saved as <b>${esc(dupe.name)}</b>.</span><div class="row-actions"><button class="btn" data-editdeal="${esc(dupe.id)}">Open it</button><button class="btn" id="d-force">Save anyway</button></div></div>`; $('d-force').onclick = () => { $('d-save').dataset.force = '1'; $('d-save').click(); }; return; } }
     await save(S.db.collection('dealers').doc(d.id||undefined), { name:V('d-name'), phone:V('d-phone'), firm:V('d-firm'), areas, notes:V('d-notes'), createdAt:d.createdAt||Date.now(), updatedAt:Date.now() }, 'Dealer saved');
@@ -686,14 +686,18 @@ function quickAreas(){
 }
 function addChipOption(id, raw){
   const v0 = String(raw||'').trim(); if (!v0) return;
-  const L = locOf(v0), v = LOC_ZONE[L] ? L : v0.replace(/\b\w/g, c=>c.toUpperCase());
+  const known = Object.keys(LOC_ZONE).find(k => k.toLowerCase() === v0.toLowerCase());
+  const v = known || v0.replace(/\s+/g,' ').replace(/(^|\s)(\S)/g, (m,a,b)=>a+b.toUpperCase());
   const inp = $(id); if (!inp) return;
   const set = inp.closest('.chipfield').querySelector('.chipset');
   if (!set.querySelector(`[data-chip-for="${id}"][data-v="${CSS.escape(v)}"]`)) set.insertAdjacentHTML('beforeend', `<button type="button" class="chip" data-chip-for="${id}" data-v="${esc(v)}" aria-pressed="false">${esc(v)}</button>`);
   const cur = splitList(inp.value); if (!cur.includes(v)) cur.push(v);
   setChip(id, cur.join(', '));
-  const src = $(id + '-x'); if (src) src.value = '';
+  const src = $(id + '-x'); if (src) { src.dataset.lastAdded = v; src.value = ''; }
+  toast(`Added “${v}”`);
 }
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'f-area-x') { e.preventDefault(); addChipOption('f-area', e.target.value); } });
+document.addEventListener('change', e => { if (e.target.id === 'f-area-x' && e.target.value.trim()) addChipOption('f-area', e.target.value); }, true);
 function setChip(id, v){
   const inp = $(id); if (!inp) return;
   inp.value = v;
@@ -1050,6 +1054,7 @@ document.addEventListener('click', async e => {
   if (t.getAttribute('aria-disabled')==='true'){ e.preventDefault(); return; }
   if (t.id==='sheet-cancel') return closeSheet();
   if (t.dataset.agr) { agreementSheet(t.dataset.agr); return; }
+  if (t.dataset.addchip) { const src0 = $(t.dataset.src); if (src0 && !src0.value.trim() && src0.dataset.lastAdded) { toast(`Added “${src0.dataset.lastAdded}”`); return; } }
   if (t.dataset.addchip) { const src = $(t.dataset.src); if (src && src.value.trim()) addChipOption(t.dataset.addchip, src.value); else toast('Type a locality first'); return; }
   if (t.dataset.chipFor) { toggleChip(t); return; }
   if (t.dataset.roomPick) { const el = $(t.dataset.roomPick); if (el) { el.value = t.dataset.v; el.dataset.own = '1'; } return; }
