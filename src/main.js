@@ -587,6 +587,7 @@ function pgForm(p={}){
     ${chips('f-ctype','Commission type',CTYPES,p.commType||'Fixed ₹ per student')}
     ${fld('f-cval','Amount ₹ / % / days',p.commValue ?? (num(p.commission)!=null?p.commission:''),'number','full','inputmode="decimal" placeholder="e.g. 5000"')}
     ${presets('f-cval',[1000,2000,3000,5000,7500,10000,15,30,50])}
+    <div class="full"><button type="button" class="btn danger" id="c-clear" style="padding:6px 12px;font-size:.8rem">Clear commission</button></div>
     ${fld('f-cnote','Commission terms, or type your own deal',p.commNote ?? (num(p.commission)==null?(p.commission||''):''),'text','full','placeholder="e.g. ₹3,000 + ₹500 per month, paid after 1 month"')}
     <p class="note full earn" id="c-calc"></p>
     <h4>Availability</h4>
@@ -659,9 +660,14 @@ function pgForm(p={}){
     }
   });
   const calc = () => { const c = commissionFor({ commType:V('f-ctype'), commValue:V('f-cval'), rent:V('f-rent') });
-    if (V('f-ctype')===CUSTOM) { $('c-calc').textContent = 'Type your deal in the terms box. Put the ₹ you earn per student in the amount box, so the dashboard can count it.'; return; }
+    if (V('f-ctype')===CUSTOM) { $('c-calc').textContent = c!=null ? `You earn ${rupee(Math.round(c))} per student${V('f-cnote')?' · '+V('f-cnote'):''}` : 'Type your deal in the terms box. Put the ₹ you earn per student in the amount box, so the dashboard can count it.'; return; }
     $('c-calc').textContent = c!=null ? `You earn about ${rupee(Math.round(c))} per student${V('f-ctype')!=='Fixed ₹ per student'?' (on starting rent)':''}` : (V('f-ctype')!=='Fixed ₹ per student'&&V('f-cval')?'Add the rent to calculate your earning':''); };
-  ['f-ctype','f-cval','f-rent'].forEach(id=>$(id).addEventListener('input', calc)); calc();
+  let lastType = V('f-ctype');
+  $('f-ctype').addEventListener('input', () => {
+    if (V('f-ctype') !== lastType) { $('f-cval').value = ''; if (lastType === CUSTOM || V('f-ctype') === CUSTOM) $('f-cnote').value = ''; lastType = V('f-ctype'); }
+  });
+  $('c-clear').onclick = () => { $('f-cval').value = ''; $('f-cnote').value = ''; calc(); toast('Commission cleared. Enter the new one.'); };
+  ['f-ctype','f-cval','f-rent','f-cnote'].forEach(id=>$(id).addEventListener('input', calc)); calc();
   if (p.id) $('pg-del').onclick = () => confirmDelete(`Delete ${p.name}?`, ()=>S.db.collection('pgs').doc(p.id).delete());
 }
 function inqForm(i={}){
@@ -697,12 +703,18 @@ function inqForm(i={}){
     ${fld('i-lost','Lost reason (if lost)',i.lostReason,'text','full','placeholder="Budget too low, found elsewhere…"')}
     ${presets('i-lost',['Budget too low','Found another PG','No reply','Location not suitable','Rooms full'])}
     <h4>Commission on this booking</h4>
-    ${fld('i-comm','Amount (₹)',i.commAmount,'number','','inputmode="numeric" placeholder="Auto from PG"')}
+    ${fld('i-comm','Amount (₹) – type your own',i.commAmount,'number','','inputmode="numeric" placeholder="Auto from PG"')}
+    <div class="full" id="i-comm-pg"></div>
     ${chips('i-cstat','Commission status',['Not due','Pending','Received'],i.commStatus||'Not due')}
     <p class="note full">When you mark the enquiry Booked, the amount fills in from the PG's agreed commission. You can change it.</p>
     ${area('i-notes','Notes & call log',i.notes,'12 Oct: called, wants AC single…')}
     </form><div id="del-zone"></div>
     <div class="sheet-foot">${i.id?`<button class="btn danger" id="inq-del" style="margin-right:auto">Delete</button>`:''}<button class="btn" id="sheet-cancel">Cancel</button><button class="btn primary" id="inq-save">Save</button></div>`);
+  const showPgComm = () => {
+    const pg = S.pgs.find(p=>p.name===V('i-pg')), c = pg ? commissionFor(pg) : null, box = $('i-comm-pg'); if (!box) return;
+    box.innerHTML = c!=null ? `<button type="button" class="chip mini" data-preset-for="i-comm" data-v="${Math.round(c)}">Use ${esc(pg.name)}'s agreed ${rupee(Math.round(c))}</button> <button type="button" class="chip mini" data-preset-for="i-comm" data-v="">Clear</button>` : `<button type="button" class="chip mini" data-preset-for="i-comm" data-v="">Clear</button>`;
+  };
+  $('i-pg').addEventListener('change', showPgComm); showPgComm();
   const ip = $('i-paste');
   if (ip) ip.addEventListener('input', () => {
     const r = parseEnquiry(ip.value), got = [];
