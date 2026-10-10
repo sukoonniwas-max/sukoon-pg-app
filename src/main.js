@@ -117,7 +117,12 @@ const fmtDT = ms => ms ? new Date(ms).toLocaleString('en-IN',{day:'numeric',mont
 const ago = ms => { if (!ms) return 'never'; const d = Math.floor((Date.now()-ms)/DAY); return d<=0?'today':d===1?'yesterday':d+' days ago'; };
 const status = i => LEGACY[i.status] || i.status || 'New';
 const isStale = p => !p.availConfirmedAt || (Date.now() - p.availConfirmedAt) > STALE_DAYS*DAY;
-const gPill = g => g ? `<span class="pill ${g==='Boys'?'p-boys':g==='Girls'?'p-girls':'p-co'}">${esc(g)}</span>` : '';
+const gPill = g => String(g||'').split(',').map(x=>x.trim()).filter(Boolean).map(x=>`<span class="pill ${x==='Boys'?'p-boys':x==='Girls'?'p-girls':'p-co'}">${esc(x)}</span>`).join('');
+const pgFor = p => String(p.gender||'').split(',').map(x=>x.trim()).filter(Boolean);
+const pgServes = (p, g) => { const f = pgFor(p); return !f.length || f.includes(g) || f.includes('Co-living'); };
+const pgAreas = p => String(p.area||'').split(',').map(x=>x.trim()).filter(Boolean);
+const pgLocs = p => [...new Set(pgAreas(p).map(locOf).filter(Boolean))];
+const pgZones = p => [...new Set(pgAreas(p).map(zoneOf).filter(z=>z!=='Other'))];
 function availPill(pg){ const b = num(pg.beds); if (b==null) return '<span class="pill p-mute">Beds ?</span>'; if (b<=0) return '<span class="pill p-bad">Full</span>'; return `<span class="pill ${b<=2?'p-warn':'p-ok'}">${b} free</span>`; }
 const stCls = s => s==='New'||s==='Follow-up Required'?'p-new':s==='Booked'?'p-ok':s==='Lost'?'p-bad':'p-mute';
 function toast(msg){ const t=$('toast'); t.textContent=msg; t.hidden=false; clearTimeout(t._h); t._h=setTimeout(()=>t.hidden=true,2400); }
@@ -148,8 +153,8 @@ function ownerConfirmMessage(p){
 function matchScore(i, p){
   let s = 0; const why = [];
   if (num(p.beds)<=0 || num(p.beds)==null) return null;
-  if (i.gender && p.gender && p.gender!=='Co-living' && p.gender!==i.gender) return null;
-  if (i.gender && p.gender===i.gender) { s+=2; why.push(i.gender); }
+  if (i.gender && !pgServes(p, i.gender)) return null;
+  if (i.gender && pgFor(p).includes(i.gender)) { s+=2; why.push(i.gender); }
   const b = num(i.budget), r = num(p.rent);
   if (b!=null && r!=null){ if (r<=b){ s+=3; why.push('within budget'); } else if (r<=b*1.15){ s+=1; why.push('slightly over budget'); } else { s-=2; why.push('over budget'); } }
   const db = num(i.depositBudget), d = num(p.deposit);
@@ -185,10 +190,10 @@ const INQ_FILTERS = {
   'Uncontacted': i=>status(i)==='New', 'Upcoming visits': upcomingVisit, 'Booked': i=>status(i)==='Booked', 'Lost': i=>status(i)==='Lost', 'All': ()=>true
 };
 function renderChips(){
-  const counts = {}; S.pgs.forEach(p=>{ const l = locOf(p.area); if (l) counts[l] = (counts[l]||0)+1; });
+  const counts = {}; S.pgs.forEach(p=>pgLocs(p).forEach(l=>{ counts[l] = (counts[l]||0)+1; }));
   const zones = {}; LOCALITIES.forEach(([z,ls])=>zones[z]=[...ls]);
   Object.keys(counts).forEach(l=>{ if (!LOC_ZONE[l]) (zones[zoneOf(l)]=zones[zoneOf(l)]||[]).push(l); });
-  const zoneCount = z => S.pgs.filter(p=>zoneOf(p.area)===z).length;
+  const zoneCount = z => S.pgs.filter(p=>pgAreas(p).some(a=>zoneOf(a)===z)).length;
   const ls = $('loc-pgs');
   ls.innerHTML = `<option value="">All localities in Delhi NCR (${S.pgs.length})</option>` + ZONES.filter(z=>zones[z]&&zones[z].length).map(z=>
     `<optgroup label="${esc(z)}"><option value="zone:${esc(z)}">All of ${esc(z)} (${zoneCount(z)})</option>${zones[z].map(l=>`<option value="loc:${esc(l)}">${esc(l)} (${counts[l]||0})</option>`).join('')}</optgroup>`).join('');
@@ -211,8 +216,8 @@ function renderPGs(){
   else if (S.fP==='Agreement confirmed') rows = rows.filter(p=>agrState(p)==='confirmed');
   else if (S.fP==='Waiting for owner') rows = rows.filter(p=>agrState(p)==='sent');
   else if (S.fP==='No agreement') rows = rows.filter(p=>agrState(p)==='none');
-  else if (GENDERS.includes(S.fP)) rows = rows.filter(p=>p.gender===S.fP);
-  if (S.fLoc) rows = rows.filter(p=>locMatch(p.area, S.fLoc));
+  else if (GENDERS.includes(S.fP)) rows = rows.filter(p=>pgFor(p).includes(S.fP));
+  if (S.fLoc) rows = rows.filter(p=>pgAreas(p).some(a=>locMatch(a, S.fLoc)));
   rows.sort((a,b)=>(num(b.beds)>0)-(num(a.beds)>0) || String(a.area).localeCompare(String(b.area)) || String(a.name).localeCompare(String(b.name)));
   if (!S.pgs.length){ el.innerHTML = `<div class="empty"><h2>No PGs yet</h2><p>Tap <b>+ Add PG</b> to save the first owner.</p></div>`; return; }
   if (!rows.length){ el.innerHTML = `<div class="empty"><p>No PG matches this filter.</p></div>`; return; }
@@ -220,7 +225,7 @@ function renderPGs(){
     const wa = waLink(p.whatsapp||p.phone, `Hi ${p.owner||''}, this is Sukoon PG Network. Is there a bed available at ${p.name}?`);
     const map = mapLink(p); const stale = isStale(p);
     return `<article class="card">
-      <div class="card-top"><div style="min-width:0"><h3>${esc(p.name||'Untitled PG')}</h3><div class="sub">${esc([p.area, p.area&&zoneOf(p.area)!=='Other'?zoneOf(p.area):'', p.metro?'near '+p.metro:''].filter(Boolean).join(' · ')||'Area not set')}</div></div>
+      <div class="card-top"><div style="min-width:0"><h3>${esc(p.name||'Untitled PG')}</h3><div class="sub">${esc([pgAreas(p).join(', '), pgZones(p).join(', '), p.metro?'near '+p.metro:''].filter(Boolean).join(' · ')||'Area not set')}</div></div>
         <div class="pills" style="justify-content:flex-end">${gPill(p.gender)}${availPill(p)}${isVerified(p)?'<span class="pill p-ok">✓ Verified</span>':'<span class="pill p-mute">Unverified</span>'}</div></div>
       <div class="money"><div><small>Rent / mo</small><strong>${rupee(p.rent)}${num(p.rentMax)?'+':''}</strong></div><div><small>Deposit</small><strong>${rupee(p.deposit)}</strong></div><div><small>You earn / student</small><strong class="earn">${commShort(p)}</strong></div></div>
       ${stale?`<div class="warnline">Availability ${p.availConfirmedAt?'last confirmed '+ago(p.availConfirmedAt):'never confirmed'}. Reconfirm with owner before sharing.</div>`:`<div class="note">Availability confirmed ${ago(p.availConfirmedAt)}${p.availableFrom?' · next vacancy '+fmtD(dateMs(p.availableFrom)):''}</div>`}
@@ -342,7 +347,7 @@ function renderDash(){
 
   // localities
   const locs = {}; const L = l => locs[l] || (locs[l] = {pgs:0, beds:0, enq:0, open:0, comm:0, list:[], dl:[]});
-  S.pgs.forEach(p=>{ const l = locOf(p.area); if (!l) return; const o = L(l); o.pgs++; o.beds += num(p.beds)>0 ? num(p.beds) : 0; o.list.push(p); });
+  S.pgs.forEach(p=>pgLocs(p).forEach(l=>{ const o = L(l); o.pgs++; o.beds += num(p.beds)>0 ? num(p.beds) : 0; o.list.push(p); }));
   S.deals.forEach(d=>{ dealerAreas(d).forEach(a=>{ const l = locOf(a); if (l) L(l).dl.push(d); }); });
   S.inq.forEach(i=>{ const l = locOf(i.area); if (!l) return; const o = L(l); o.enq++; if (!CLOSED.includes(status(i))) o.open++; if (status(i)==='Booked') o.comm += num(i.commAmount)||0; });
   const byZone = {}; Object.entries(locs).forEach(([l,o])=>(byZone[zoneOf(l)] = byZone[zoneOf(l)] || []).push([l,o]));
@@ -676,8 +681,18 @@ const kRs = v => '₹' + (v>=1000 ? (v/1000)+'k' : v);
 function dayStr(n){ const d = new Date(); d.setDate(d.getDate()+n); const z = x=>String(x).padStart(2,'0'); return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}`; }
 function datePresets(id){ const L = {0:'Today',1:'Tomorrow',3:'In 3 days',7:'Next week'}; return presets(id, [0,1,3,7].map(dayStr), v => L[[0,1,3,7].find(n=>dayStr(n)===v)]); }
 function quickAreas(){
-  const used = [...new Set([...S.pgs.map(p=>locOf(p.area)), ...S.inq.map(i=>locOf(i.area))].filter(l=>LOC_ZONE[l]))];
+  const used = [...new Set([...S.pgs.flatMap(pgLocs), ...S.inq.map(i=>locOf(i.area))].filter(l=>LOC_ZONE[l]))];
   return [...new Set([...used, 'Rohini','Badli','Bawana Road (DTU)','Pitampura','Mukherjee Nagar','Laxmi Nagar','Kamla Nagar','Noida Sector 62'])].slice(0,8);
+}
+function addChipOption(id, raw){
+  const v0 = String(raw||'').trim(); if (!v0) return;
+  const L = locOf(v0), v = LOC_ZONE[L] ? L : v0.replace(/\b\w/g, c=>c.toUpperCase());
+  const inp = $(id); if (!inp) return;
+  const set = inp.closest('.chipfield').querySelector('.chipset');
+  if (!set.querySelector(`[data-chip-for="${id}"][data-v="${CSS.escape(v)}"]`)) set.insertAdjacentHTML('beforeend', `<button type="button" class="chip" data-chip-for="${id}" data-v="${esc(v)}" aria-pressed="false">${esc(v)}</button>`);
+  const cur = splitList(inp.value); if (!cur.includes(v)) cur.push(v);
+  setChip(id, cur.join(', '));
+  const src = $(id + '-x'); if (src) src.value = '';
 }
 function setChip(id, v){
   const inp = $(id); if (!inp) return;
@@ -698,9 +713,9 @@ function pgForm(p={}){
     ${p.id?'':`<label class="full paste-box">Paste from Google Maps (optional)<textarea id="f-paste" placeholder="In Google Maps open the PG, tap Share, then Copy. Long-press here and Paste."></textarea></label><p class="note full earn" id="f-paste-msg"></p>`}
     <h4>Basics</h4>
     ${fld('f-name','PG name *',p.name,'text','full','required')}
-    ${chips('f-gender','For',GENDERS,p.gender||'Boys')}
-    ${fld('f-area','Area / locality',p.area,'text','full','list="loc-list" placeholder="Pick or type, e.g. Rohini"')}
-    ${presets('f-area', quickAreas())}
+    ${chips('f-gender','For (tap all that apply)',GENDERS,p.gender||'Boys',true)}
+    ${chips('f-area','Areas covered (tap all that apply)',quickAreas(),p.area,true)}
+    <div class="full addrow"><input id="f-area-x" type="text" list="loc-list" placeholder="Add another, e.g. Shalimar Bagh"><button type="button" class="btn" data-addchip="f-area" data-src="f-area-x">+ Add</button></div>
     ${fld('f-metro','Nearest metro / college',p.metro,'text','full','placeholder="DTU, Rithala metro"')}
     <h4>Owner</h4>
     ${fld('f-owner','Owner / manager',p.owner)}
@@ -755,6 +770,8 @@ function pgForm(p={}){
     if (!V('f-name')){ $('f-name').focus(); toast('Add the PG name'); return; }
     const verify = {}; VERIFY.forEach(([k])=>{ if ($('v-'+k).checked) verify[k] = v[k] || Date.now(); });
     const bedsChanged = V('f-beds') !== String(p.beds ?? '');
+    if ($('f-area-x').value.trim()) addChipOption('f-area', $('f-area-x').value);
+    if (!V('f-gender')) { toast('Choose Boys, Girls or Co-living'); return; }
     const data = { name:V('f-name'), gender:V('f-gender'), area:V('f-area'), metro:V('f-metro'), owner:V('f-owner'), phone:V('f-phone'), whatsapp:V('f-wa'),
       rent:V('f-rent'), rentMax:V('f-rentmax'), deposit:V('f-dep'), commType:V('f-ctype'), commValue:V('f-cval'), commNote:V('f-cnote'), commission:'', totalBeds:V('f-total'), beds:V('f-beds'), availableFrom:V('f-from'),
       rooms:V('f-rooms'), rentSingle:V('f-r1'), rentSharing:V('f-r2'), food:V('f-food'), facilities:V('f-fac'), lockIn:V('f-lock'), notice:V('f-notice'), electricity:V('f-elec'), terms:[V('f-terms'),V('f-terms-x')].filter(Boolean).join(', '),
@@ -773,7 +790,7 @@ function pgForm(p={}){
     const r = parseMapsShare(pb.value);
     const put = (id, v) => { if (v && $(id)) $(id).value = v; };
     const show = () => {
-      put('f-name', r.name); put('f-addr', r.address); put('f-map', r.mapUrl); put('f-area', r.area); put('f-phone', r.phone);
+      put('f-name', r.name); put('f-addr', r.address); put('f-map', r.mapUrl); if (r.area) addChipOption('f-area', r.area); put('f-phone', r.phone);
       if (r.gender && $('f-gender')) setChip('f-gender', r.gender);
       const got = [r.name&&'name', r.address&&'address', r.mapUrl&&'map link', r.area&&'locality', r.phone&&'phone'].filter(Boolean);
       if ($('f-paste-msg')) $('f-paste-msg').textContent = got.length ? `Filled ${got.join(', ')}. Now add the owner's number, rent, beds and commission.` : 'Could not read this. Paste the text you copied from Google Maps.';
@@ -1006,7 +1023,7 @@ async function exportData(kind){
   const data = kind==='pgs' ? csv(S.pgs, [['PG name',p=>p.name],['For',p=>p.gender],['Area',p=>p.area],['Near',p=>p.metro],['Owner',p=>p.owner],['Phone',p=>p.phone],['WhatsApp',p=>p.whatsapp],
       ['Rent from',p=>p.rent],['Rent up to',p=>p.rentMax],['Deposit',p=>p.deposit],['Total beds',p=>p.totalBeds],['Beds free',p=>p.beds],['Availability confirmed',p=>p.availConfirmedAt?new Date(p.availConfirmedAt).toLocaleDateString('en-IN'):''],
       ['Next vacancy',p=>p.availableFrom],['Rooms',p=>p.rooms],['Food',p=>p.food],['Facilities',p=>p.facilities],['Lock-in',p=>p.lockIn],['Notice',p=>p.notice],['Electricity',p=>p.electricity],['Terms',p=>p.terms],
-      ['Locality',p=>locOf(p.area)],['Zone',p=>p.area?zoneOf(p.area):''],['Address',p=>p.address],['Map',p=>mapLink(p)],
+      ['Localities',p=>pgLocs(p).join(', ')],['Zones',p=>pgZones(p).join(', ')],['Address',p=>p.address],['Map',p=>mapLink(p)],
       ['Commission type',p=>p.commType||''],['Commission value',p=>p.commValue ?? p.commission ?? ''],['Commission ₹ per student',p=>{ const c = commissionFor(p); return c!=null ? Math.round(c) : ''; }],['Commission single room',p=>{ const c = commissionFor(p,'Single'); return c!=null ? Math.round(c) : ''; }],['Commission sharing',p=>{ const c = commissionFor(p,'Double'); return c!=null ? Math.round(c) : ''; }],['Single room rent',p=>p.rentSingle||''],['Sharing room rent',p=>p.rentSharing||''],['Commission terms',p=>p.commNote||''],
       ['Agreement',p=>({none:'Not sent',sent:'Waiting for owner',confirmed:'Confirmed'})[agrState(p)]],['Agreement ID',p=>(p.agreement||{}).id||''],
       ['Agreed ₹ per student',p=>(p.agreement||{}).amount ?? ''],['Agreement confirmed on',p=>(p.agreement||{}).confirmedAt?new Date(p.agreement.confirmedAt).toLocaleDateString('en-IN'):''],...VERIFY.map(([k,l])=>[l,p=>(p.verify||{})[k]?new Date(p.verify[k]).toLocaleDateString('en-IN'):''])])
@@ -1033,6 +1050,7 @@ document.addEventListener('click', async e => {
   if (t.getAttribute('aria-disabled')==='true'){ e.preventDefault(); return; }
   if (t.id==='sheet-cancel') return closeSheet();
   if (t.dataset.agr) { agreementSheet(t.dataset.agr); return; }
+  if (t.dataset.addchip) { const src = $(t.dataset.src); if (src && src.value.trim()) addChipOption(t.dataset.addchip, src.value); else toast('Type a locality first'); return; }
   if (t.dataset.chipFor) { toggleChip(t); return; }
   if (t.dataset.roomPick) { const el = $(t.dataset.roomPick); if (el) { el.value = t.dataset.v; el.dataset.own = '1'; } return; }
   if (t.dataset.presetFor) { const el = $(t.dataset.presetFor); if (el) { el.value = t.dataset.v; el.dispatchEvent(new Event('input')); } return; }

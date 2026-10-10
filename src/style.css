@@ -230,3 +230,6 @@ header{padding-bottom:10px}
 .bottomnav .n{font-style:normal;font-size:.66rem;background:var(--marigold-soft);color:var(--warn);border-radius:99px;padding:0 5px;margin-left:2px}
 .fab{bottom:calc(84px + env(safe-area-inset-bottom,0px))}
 .toast{bottom:calc(150px + env(safe-area-inset-bottom,0px))}
+
+.addrow{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:-4px}
+.addrow .btn{padding:8px 14px}
