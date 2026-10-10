@@ -51,18 +51,45 @@ function zoneOf(area){
 function locMatch(area, key){ if (!key) return true; const k = key.slice(0,key.indexOf(':')), v = key.slice(key.indexOf(':')+1); return k==='zone' ? zoneOf(area)===v : locOf(area)===v; }
 const CUSTOM = 'Custom (type your own)';
 const CTYPES = ['Fixed ₹ per student','% of 1 month rent','Days of rent',CUSTOM];
-function commissionFor(p){
+// Rent for a room type: Single uses the single-room rent, any sharing uses the sharing rent.
+function rentFor(p, room){
+  const single = num(p.rentSingle) ?? num(p.rent), sharing = num(p.rentSharing) ?? num(p.rentMax) ?? num(p.rent);
+  if (room === 'Single') return single;
+  if (room && room !== 'Any') return sharing;
+  return single ?? sharing;
+}
+const rentBased = p => ['% of 1 month rent','Days of rent'].includes(p.commType);
+function commissionFor(p, room){
   let v = num(p.commValue); const t = p.commType || 'Fixed ₹ per student';
   if (v==null) return num(p.commission);
   if (t==='Fixed ₹ per student' || t===CUSTOM) return v;
-  const r = num(p.rent); if (r==null) return null;
+  const r = rentFor(p, room); if (r==null) return null;
   return t==='% of 1 month rent' ? r*v/100 : r*v/30;
+}
+// For %/days deals: what you earn on a single room and on a sharing room.
+function commSplit(p){
+  if (!rentBased(p) || num(p.commValue)==null) return null;
+  const a = commissionFor(p,'Single'), b = commissionFor(p,'Double');
+  if (a==null && b==null) return null;
+  return { single: a, sharing: b, rs: rentFor(p,'Single'), rd: rentFor(p,'Double') };
+}
+function commShort(p){
+  const sp = commSplit(p);
+  if (sp && sp.single!=null && sp.sharing!=null && Math.round(sp.single)!==Math.round(sp.sharing)) {
+    const lo = Math.min(sp.single, sp.sharing), hi = Math.max(sp.single, sp.sharing);
+    return `${rupee(Math.round(lo))}–${rupee(Math.round(hi))}`;
+  }
+  const c = commissionFor(p); return c!=null ? rupee(Math.round(c)) : (p.commission&&num(p.commission)==null ? esc(p.commission) : '—');
+}
+function commBreakdown(p){
+  const sp = commSplit(p); if (!sp) return '';
+  return [sp.single!=null && `Single room (${rupee(sp.rs)}): ${rupee(Math.round(sp.single))}`, sp.sharing!=null && `Sharing (${rupee(sp.rd)}): ${rupee(Math.round(sp.sharing))}`].filter(Boolean).join(' · ');
 }
 function commLabel(p){
   const v = num(p.commValue), c = commissionFor(p);
   if (p.commType===CUSTOM) return [p.commNote, v!=null ? `${rupee(v)} per student` : ''].filter(Boolean).join(' · ') || '—';
   const base = v==null ? (p.commission||'') : p.commType==='% of 1 month rent' ? `${v}% of 1 month rent` : p.commType==='Days of rent' ? `${v} days of rent` : `${rupee(v)} per student`;
-  return [base, (v!=null && c!=null && p.commType && p.commType!=='Fixed ₹ per student') ? `about ${rupee(Math.round(c))} per student` : '', p.commNote].filter(Boolean).join(' · ') || '—';
+  return [base, rentBased(p) ? commBreakdown(p) : '', p.commNote].filter(Boolean).join(' · ') || '—';
 }
 function roomRents(p){ return [num(p.rentSingle)!=null && `Single ${rupee(p.rentSingle)}`, num(p.rentSharing)!=null && `Sharing ${rupee(p.rentSharing)}`].filter(Boolean).join(' · '); }
 function commBase(p){
@@ -193,7 +220,7 @@ function renderPGs(){
     return `<article class="card">
       <div class="card-top"><div style="min-width:0"><h3>${esc(p.name||'Untitled PG')}</h3><div class="sub">${esc([p.area, p.area&&zoneOf(p.area)!=='Other'?zoneOf(p.area):'', p.metro?'near '+p.metro:''].filter(Boolean).join(' · ')||'Area not set')}</div></div>
         <div class="pills" style="justify-content:flex-end">${gPill(p.gender)}${availPill(p)}${isVerified(p)?'<span class="pill p-ok">✓ Verified</span>':'<span class="pill p-mute">Unverified</span>'}</div></div>
-      <div class="money"><div><small>Rent / mo</small><strong>${rupee(p.rent)}${num(p.rentMax)?'+':''}</strong></div><div><small>Deposit</small><strong>${rupee(p.deposit)}</strong></div><div><small>You earn / student</small><strong class="earn">${commissionFor(p)!=null?rupee(Math.round(commissionFor(p))):(p.commission&&num(p.commission)==null?esc(p.commission):'—')}</strong></div></div>
+      <div class="money"><div><small>Rent / mo</small><strong>${rupee(p.rent)}${num(p.rentMax)?'+':''}</strong></div><div><small>Deposit</small><strong>${rupee(p.deposit)}</strong></div><div><small>You earn / student</small><strong class="earn">${commShort(p)}</strong></div></div>
       ${stale?`<div class="warnline">Availability ${p.availConfirmedAt?'last confirmed '+ago(p.availConfirmedAt):'never confirmed'}. Reconfirm with owner before sharing.</div>`:`<div class="note">Availability confirmed ${ago(p.availConfirmedAt)}${p.availableFrom?' · next vacancy '+fmtD(dateMs(p.availableFrom)):''}</div>`}
       ${verifyBadges(p)}
       <div class="badges">${agrBadge(p)}</div>
@@ -275,7 +302,7 @@ function renderDash(){
   const commPend = bookedI.filter(i=>i.commStatus!=='Received').reduce((s,i)=>s+(num(i.commAmount)||0),0);
   const monthEarned = bookedI.filter(i=>(i.updatedAt||0)>=m0 && i.commStatus==='Received').reduce((s,i)=>s+(num(i.commAmount)||0),0);
   const pipe = S.inq.filter(i=>['Visit Scheduled','Visit Completed','Booking Pending'].includes(status(i)) && i.pgId)
-    .reduce((s,i)=>{ const p = S.pgs.find(x=>x.id===i.pgId); return s + ((p&&commissionFor(p))||0); },0);
+    .reduce((s,i)=>{ const p = S.pgs.find(x=>x.id===i.pgId); return s + ((p&&commissionFor(p, i.sharing))||0); },0);
   const avgComm = (()=>{ const v = S.pgs.map(commissionFor).filter(x=>x!=null&&x>0); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : null; })();
   const agrOk = S.pgs.filter(p=>agrState(p)==='confirmed').length, agrWait = S.pgs.filter(p=>agrState(p)==='sent').length, agrNone = S.pgs.filter(p=>agrState(p)==='none').length;
   const hr = now.getHours(), hello = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
@@ -391,7 +418,7 @@ function agrText(p, a){
   const d = new Date(a.sentAt || Date.now()).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
   const rent = num(p.rent)!=null ? `${rupee(p.rent)}${num(p.rentMax)?' – '+rupee(p.rentMax):''} per month` : '';
   const charges = [rent && 'Rent ' + rent, num(p.deposit)!=null && 'Deposit ' + rupee(p.deposit)].filter(Boolean).join(', ');
-  const amount = a.amount!=null ? `${rupee(a.amount)} per student` : a.label;
+  const amount = a.amount!=null && !/days of rent|% of 1 month/.test(a.label||'') ? `${rupee(a.amount)} per student` : a.label;
   const extra = a.amount!=null && a.label && a.label !== `${rupee(a.amount)} per student` ? ` (${a.label})` : '';
   let n = 0; const pt = t => `${++n}. ${t}`;
   return [
@@ -422,7 +449,7 @@ function shrinkImage(file){
 }
 function agreementSheet(pgId, forceNew){
   const p = S.pgs.find(x => x.id === pgId); if (!p) return;
-  const amt = commissionFor(p), amount = amt!=null ? Math.round(amt) : null, label = commBase(p);
+  const amt = commissionFor(p), amount = amt!=null ? Math.round(amt) : null, label = rentBased(p) && commBreakdown(p) ? `${commBase(p)} per student (${commBreakdown(p)})` : commBase(p);
   const old = p.agreement;
   const confirmed = old && old.status === 'Confirmed' && !forceNew;
   const a = confirmed ? old : { id: (old && old.status !== 'Confirmed' && old.id) || ('AGR-' + Math.random().toString(36).slice(2,6).toUpperCase()), amount, label, status: (old && old.status !== 'Confirmed') ? old.status : 'Draft', sentAt: (old && old.status !== 'Confirmed' && old.sentAt) || null };
@@ -664,7 +691,8 @@ function pgForm(p={}){
       if (!r.name && $('f-paste-msg')) $('f-paste-msg').textContent = 'Got the map link, but Google did not share the name. Please type the PG name.';
     }
   });
-  const calc = () => { const c = commissionFor({ commType:V('f-ctype'), commValue:V('f-cval'), rent:V('f-rent') });
+  const calc = () => { const fp = { commType:V('f-ctype'), commValue:V('f-cval'), rent:V('f-rent'), rentMax:V('f-rentmax'), rentSingle:V('f-r1'), rentSharing:V('f-r2') }, c = commissionFor(fp);
+    if (rentBased(fp) && V('f-cval')) { const b = commBreakdown(fp); $('c-calc').textContent = b ? 'You earn: ' + b : 'Add the room rents above to calculate your earning'; return; }
     if (V('f-ctype')===CUSTOM) { $('c-calc').textContent = c!=null ? `You earn ${rupee(Math.round(c))} per student${V('f-cnote')?' · '+V('f-cnote'):''}` : 'Type your deal in the terms box. Put the ₹ you earn per student in the amount box, so the dashboard can count it.'; return; }
     $('c-calc').textContent = c!=null ? `You earn about ${rupee(Math.round(c))} per student${V('f-ctype')!=='Fixed ₹ per student'?' (on starting rent)':''}` : (V('f-ctype')!=='Fixed ₹ per student'&&V('f-cval')?'Add the rent to calculate your earning':''); };
   // Single room = "Rent from", sharing room = "Rent up to". Filled automatically until you change them yourself.
@@ -691,7 +719,8 @@ function pgForm(p={}){
     if (V('f-ctype') !== lastType) { $('f-cval').value = ''; if (lastType === CUSTOM || V('f-ctype') === CUSTOM) $('f-cnote').value = ''; lastType = V('f-ctype'); }
   });
   $('c-clear').onclick = () => { $('f-cval').value = ''; $('f-cnote').value = ''; calc(); toast('Commission cleared. Enter the new one.'); };
-  ['f-ctype','f-cval','f-rent','f-cnote'].forEach(id=>$(id).addEventListener('input', calc)); calc();
+  ['f-ctype','f-cval','f-rent','f-rentmax','f-r1','f-r2','f-cnote'].forEach(id=>$(id).addEventListener('input', calc)); calc();
+  document.getElementById('sheet-root').addEventListener('click', e => { if (e.target.closest('[data-room-pick]')) setTimeout(calc); });
   if (p.id) $('pg-del').onclick = () => confirmDelete(`Delete ${p.name}?`, ()=>S.db.collection('pgs').doc(p.id).delete());
 }
 function inqForm(i={}){
@@ -735,10 +764,15 @@ function inqForm(i={}){
     </form><div id="del-zone"></div>
     <div class="sheet-foot">${i.id?`<button class="btn danger" id="inq-del" style="margin-right:auto">Delete</button>`:''}<button class="btn" id="sheet-cancel">Cancel</button><button class="btn primary" id="inq-save">Save</button></div>`);
   const showPgComm = () => {
-    const pg = S.pgs.find(p=>p.name===V('i-pg')), c = pg ? commissionFor(pg) : null, box = $('i-comm-pg'); if (!box) return;
-    box.innerHTML = c!=null ? `<button type="button" class="chip mini" data-preset-for="i-comm" data-v="${Math.round(c)}">Use ${esc(pg.name)}'s agreed ${rupee(Math.round(c))}</button> <button type="button" class="chip mini" data-preset-for="i-comm" data-v="">Clear</button>` : `<button type="button" class="chip mini" data-preset-for="i-comm" data-v="">Clear</button>`;
+    const pg = S.pgs.find(p=>p.name===V('i-pg')), box = $('i-comm-pg'); if (!box) return;
+    const clear = `<button type="button" class="chip mini" data-preset-for="i-comm" data-v="">Clear</button>`;
+    if (!pg) { box.innerHTML = clear; return; }
+    const sp = commSplit(pg), room = V('i-sharing');
+    const opts = sp ? [['Single room', sp.single], ['Sharing', sp.sharing]] : [['agreed', commissionFor(pg)]];
+    box.innerHTML = opts.filter(o=>o[1]!=null).map(([l,v])=>`<button type="button" class="chip mini" data-preset-for="i-comm" data-v="${Math.round(v)}">${esc(l)}: ${rupee(Math.round(v))}</button>`).join(' ') + ' ' + clear
+      + (sp && room ? `<p class="note">Student wants <b>${esc(room)}</b>, so the commission is ${rupee(Math.round(commissionFor(pg, room)))}.</p>` : '');
   };
-  $('i-pg').addEventListener('change', showPgComm); showPgComm();
+  $('i-pg').addEventListener('change', showPgComm); $('i-sharing').addEventListener('input', showPgComm); showPgComm();
   const ip = $('i-paste');
   if (ip) ip.addEventListener('input', () => {
     const r = parseEnquiry(ip.value), got = [];
@@ -762,7 +796,7 @@ function inqForm(i={}){
       code:i.code||newCode(), shares:i.shares||[], createdAt:i.createdAt||Date.now(), updatedAt:Date.now() };
     delete data.id;
     if (data.status==='Booked'){
-      if (data.commAmount==='' && pg){ const c = commissionFor(pg); if (c!=null) data.commAmount = String(Math.round(c)); }
+      if (data.commAmount==='' && pg){ const c = commissionFor(pg, data.sharing); if (c!=null) data.commAmount = String(Math.round(c)); }
       if (data.commStatus==='Not due') data.commStatus = 'Pending';
     }
     if (data.status==='Visit Scheduled' && !data.visitDate){ $('i-visit').focus(); toast('Add the visit date'); return; }
@@ -872,7 +906,7 @@ async function exportData(kind){
       ['Rent from',p=>p.rent],['Rent up to',p=>p.rentMax],['Deposit',p=>p.deposit],['Total beds',p=>p.totalBeds],['Beds free',p=>p.beds],['Availability confirmed',p=>p.availConfirmedAt?new Date(p.availConfirmedAt).toLocaleDateString('en-IN'):''],
       ['Next vacancy',p=>p.availableFrom],['Rooms',p=>p.rooms],['Food',p=>p.food],['Facilities',p=>p.facilities],['Lock-in',p=>p.lockIn],['Notice',p=>p.notice],['Electricity',p=>p.electricity],['Terms',p=>p.terms],
       ['Locality',p=>locOf(p.area)],['Zone',p=>p.area?zoneOf(p.area):''],['Address',p=>p.address],['Map',p=>mapLink(p)],
-      ['Commission type',p=>p.commType||''],['Commission value',p=>p.commValue ?? p.commission ?? ''],['Commission ₹ per student',p=>{ const c = commissionFor(p); return c!=null ? Math.round(c) : ''; }],['Commission terms',p=>p.commNote||''],
+      ['Commission type',p=>p.commType||''],['Commission value',p=>p.commValue ?? p.commission ?? ''],['Commission ₹ per student',p=>{ const c = commissionFor(p); return c!=null ? Math.round(c) : ''; }],['Commission single room',p=>{ const c = commissionFor(p,'Single'); return c!=null ? Math.round(c) : ''; }],['Commission sharing',p=>{ const c = commissionFor(p,'Double'); return c!=null ? Math.round(c) : ''; }],['Single room rent',p=>p.rentSingle||''],['Sharing room rent',p=>p.rentSharing||''],['Commission terms',p=>p.commNote||''],
       ['Agreement',p=>({none:'Not sent',sent:'Waiting for owner',confirmed:'Confirmed'})[agrState(p)]],['Agreement ID',p=>(p.agreement||{}).id||''],
       ['Agreed ₹ per student',p=>(p.agreement||{}).amount ?? ''],['Agreement confirmed on',p=>(p.agreement||{}).confirmedAt?new Date(p.agreement.confirmedAt).toLocaleDateString('en-IN'):''],...VERIFY.map(([k,l])=>[l,p=>(p.verify||{})[k]?new Date(p.verify[k]).toLocaleDateString('en-IN'):''])])
     : csv(S.inq, [['Enquiry ID',i=>i.code],['Received',i=>i.createdAt?new Date(i.createdAt).toLocaleString('en-IN'):''],['Name',i=>i.name],['Phone',i=>i.phone],['Source',i=>i.source],['College',i=>i.college],
