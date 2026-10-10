@@ -64,6 +64,7 @@ function commLabel(p){
   const base = v==null ? (p.commission||'') : p.commType==='% of 1 month rent' ? `${v}% of 1 month rent` : p.commType==='Days of rent' ? `${v} days of rent` : `${rupee(v)} per student`;
   return [base, (v!=null && c!=null && p.commType && p.commType!=='Fixed ₹ per student') ? `about ${rupee(Math.round(c))} per student` : '', p.commNote].filter(Boolean).join(' · ') || '—';
 }
+function roomRents(p){ return [num(p.rentSingle)!=null && `Single ${rupee(p.rentSingle)}`, num(p.rentSharing)!=null && `Sharing ${rupee(p.rentSharing)}`].filter(Boolean).join(' · '); }
 function commBase(p){
   const v = num(p.commValue);
   if (p.commType===CUSTOM) return p.commNote || (v!=null ? `${rupee(v)} per student` : '');
@@ -105,7 +106,7 @@ function pgBlock(p, n){
   const avail = num(p.beds)>0 ? (isStale(p) ? `${p.beds} bed(s) as of ${fmtD(p.availConfirmedAt)} (availability to be reconfirmed)` : `${p.beds} bed(s) available (confirmed ${fmtD(p.availConfirmedAt)})`) : 'Availability to be confirmed';
   const terms = [p.lockIn&&('Lock-in: '+p.lockIn), p.notice&&('Notice: '+p.notice), p.electricity&&('Electricity: '+p.electricity)].filter(Boolean).join(' · ');
   return [`${n?n+'. ':''}*${p.name}*${p.area?' – '+p.area:''}`, p.gender&&`For: ${p.gender}`, rent&&`Rent: ${rent}`, num(p.deposit)!=null&&`Security deposit: ${rupee(p.deposit)}`,
-    p.rooms&&`Rooms: ${p.rooms}`, p.food&&`Food: ${p.food}`, p.facilities&&`Facilities: ${p.facilities}`, `Availability: ${avail}`, terms&&`Terms: ${terms}`,
+    p.rooms&&`Rooms: ${p.rooms}`, roomRents(p)&&`Room rent: ${roomRents(p)}`, p.food&&`Food: ${p.food}`, p.facilities&&`Facilities: ${p.facilities}`, `Availability: ${avail}`, terms&&`Terms: ${terms}`,
     p.address&&`Address: ${p.address}`, mapLink(p)&&`Map: ${mapLink(p)}`].filter(Boolean).join('\n');
 }
 function enquiryMessage(i, pgs){
@@ -204,6 +205,7 @@ function renderPGs(){
       </div>
       <details><summary>Details, rules &amp; terms</summary><dl>
         <dt>Rooms</dt><dd>${esc(p.rooms||'—')}</dd>
+        ${roomRents(p)?`<dt>Room rent</dt><dd>${esc(roomRents(p))}</dd>`:''}
         <dt>Food</dt><dd>${esc(p.food||'—')}</dd>
         <dt>Facilities</dt><dd>${esc(p.facilities||'—')}</dd>
         <dt>Lock-in</dt><dd>${esc(p.lockIn||'—')}</dd>
@@ -598,6 +600,9 @@ function pgForm(p={}){
     ${datePresets('f-from')}
     <h4>Rooms &amp; terms</h4>
     ${chips('f-rooms','Rooms & sharing',['Single','Double','Triple','4+ sharing','AC rooms','Non-AC rooms','Attached washroom'],p.rooms,true)}
+    ${fld('f-r1','Single room rent (₹/mo)',p.rentSingle,'number','','inputmode="numeric" placeholder="From “Rent from”"')}
+    ${fld('f-r2','Sharing room rent (₹/mo)',p.rentSharing,'number','','inputmode="numeric" placeholder="From “Rent up to”"')}
+    <div class="full chipset presets" id="r-picks"></div>
     ${chips('f-food','Food',['Breakfast','Lunch','Dinner','Veg','Non-veg','No food'],p.food,true)}
     ${chips('f-fac','Facilities',FACILITIES,p.facilities,true)}
     ${fld('f-lock','Lock-in (tap or type)',p.lockIn,'text','full','placeholder="e.g. 3 months"')}
@@ -624,7 +629,7 @@ function pgForm(p={}){
     const bedsChanged = V('f-beds') !== String(p.beds ?? '');
     const data = { name:V('f-name'), gender:V('f-gender'), area:V('f-area'), metro:V('f-metro'), owner:V('f-owner'), phone:V('f-phone'), whatsapp:V('f-wa'),
       rent:V('f-rent'), rentMax:V('f-rentmax'), deposit:V('f-dep'), commType:V('f-ctype'), commValue:V('f-cval'), commNote:V('f-cnote'), commission:'', totalBeds:V('f-total'), beds:V('f-beds'), availableFrom:V('f-from'),
-      rooms:V('f-rooms'), food:V('f-food'), facilities:V('f-fac'), lockIn:V('f-lock'), notice:V('f-notice'), electricity:V('f-elec'), terms:[V('f-terms'),V('f-terms-x')].filter(Boolean).join(', '),
+      rooms:V('f-rooms'), rentSingle:V('f-r1'), rentSharing:V('f-r2'), food:V('f-food'), facilities:V('f-fac'), lockIn:V('f-lock'), notice:V('f-notice'), electricity:V('f-elec'), terms:[V('f-terms'),V('f-terms-x')].filter(Boolean).join(', '),
       address:V('f-addr'), mapUrl:V('f-map'), verify, notes:V('f-notes'), agreement: p.agreement || null,
       availConfirmedAt: (bedsChanged && V('f-beds')!=='') ? Date.now() : (p.availConfirmedAt||null),
       createdAt:p.createdAt||Date.now(), updatedAt:Date.now() };
@@ -662,6 +667,25 @@ function pgForm(p={}){
   const calc = () => { const c = commissionFor({ commType:V('f-ctype'), commValue:V('f-cval'), rent:V('f-rent') });
     if (V('f-ctype')===CUSTOM) { $('c-calc').textContent = c!=null ? `You earn ${rupee(Math.round(c))} per student${V('f-cnote')?' · '+V('f-cnote'):''}` : 'Type your deal in the terms box. Put the ₹ you earn per student in the amount box, so the dashboard can count it.'; return; }
     $('c-calc').textContent = c!=null ? `You earn about ${rupee(Math.round(c))} per student${V('f-ctype')!=='Fixed ₹ per student'?' (on starting rent)':''}` : (V('f-ctype')!=='Fixed ₹ per student'&&V('f-cval')?'Add the rent to calculate your earning':''); };
+  // Single room = "Rent from", sharing room = "Rent up to". Filled automatically until you change them yourself.
+  const r1 = $('f-r1'), r2 = $('f-r2');
+  r1.dataset.own = p.rentSingle ? '1' : ''; r2.dataset.own = p.rentSharing ? '1' : '';
+  const roomPicks = () => {
+    const a = V('f-rent'), b = V('f-rentmax'), k = v => '₹' + Number(v).toLocaleString('en-IN');
+    $('r-picks').innerHTML = [a && `<button type="button" class="chip mini" data-room-pick="f-r1" data-v="${esc(a)}">Single = ${k(a)}</button>`,
+      b && `<button type="button" class="chip mini" data-room-pick="f-r2" data-v="${esc(b)}">Sharing = ${k(b)}</button>`,
+      a && `<button type="button" class="chip mini" data-room-pick="f-r2" data-v="${esc(a)}">Sharing = ${k(a)}</button>`,
+      b && `<button type="button" class="chip mini" data-room-pick="f-r1" data-v="${esc(b)}">Single = ${k(b)}</button>`].filter(Boolean).join('');
+  };
+  const syncRooms = () => {
+    if (!r1.dataset.own) r1.value = V('f-rent');
+    if (!r2.dataset.own) r2.value = V('f-rentmax');
+    roomPicks();
+  };
+  r1.addEventListener('input', e => { if (e.isTrusted) r1.dataset.own = r1.value ? '1' : ''; });
+  r2.addEventListener('input', e => { if (e.isTrusted) r2.dataset.own = r2.value ? '1' : ''; });
+  ['f-rent','f-rentmax'].forEach(id => $(id).addEventListener('input', syncRooms));
+  syncRooms();
   let lastType = V('f-ctype');
   $('f-ctype').addEventListener('input', () => {
     if (V('f-ctype') !== lastType) { $('f-cval').value = ''; if (lastType === CUSTOM || V('f-ctype') === CUSTOM) $('f-cnote').value = ''; lastType = V('f-ctype'); }
@@ -871,6 +895,7 @@ document.addEventListener('click', async e => {
   if (t.id==='sheet-cancel') return closeSheet();
   if (t.dataset.agr) { agreementSheet(t.dataset.agr); return; }
   if (t.dataset.chipFor) { toggleChip(t); return; }
+  if (t.dataset.roomPick) { const el = $(t.dataset.roomPick); if (el) { el.value = t.dataset.v; el.dataset.own = '1'; } return; }
   if (t.dataset.presetFor) { const el = $(t.dataset.presetFor); if (el) { el.value = t.dataset.v; el.dispatchEvent(new Event('input')); } return; }
   if (t.dataset.fp) { S.fP=t.dataset.fp; render(); }
   if (t.dataset.fi) { S.fI=t.dataset.fi; render(); }
