@@ -49,26 +49,29 @@ function zoneOf(area){
   return 'Other';
 }
 function locMatch(area, key){ if (!key) return true; const k = key.slice(0,key.indexOf(':')), v = key.slice(key.indexOf(':')+1); return k==='zone' ? zoneOf(area)===v : locOf(area)===v; }
-const CTYPES = ['Fixed ₹ per student','% of 1 month rent','Days of rent'];
+const CUSTOM = 'Custom (type your own)';
+const CTYPES = ['Fixed ₹ per student','% of 1 month rent','Days of rent',CUSTOM];
 function commissionFor(p){
   let v = num(p.commValue); const t = p.commType || 'Fixed ₹ per student';
   if (v==null) return num(p.commission);
-  if (t==='Fixed ₹ per student') return v;
+  if (t==='Fixed ₹ per student' || t===CUSTOM) return v;
   const r = num(p.rent); if (r==null) return null;
   return t==='% of 1 month rent' ? r*v/100 : r*v/30;
 }
 function commLabel(p){
   const v = num(p.commValue), c = commissionFor(p);
+  if (p.commType===CUSTOM) return [p.commNote, v!=null ? `${rupee(v)} per student` : ''].filter(Boolean).join(' · ') || '—';
   const base = v==null ? (p.commission||'') : p.commType==='% of 1 month rent' ? `${v}% of 1 month rent` : p.commType==='Days of rent' ? `${v} days of rent` : `${rupee(v)} per student`;
   return [base, (v!=null && c!=null && p.commType && p.commType!=='Fixed ₹ per student') ? `about ${rupee(Math.round(c))} per student` : '', p.commNote].filter(Boolean).join(' · ') || '—';
 }
 function commBase(p){
   const v = num(p.commValue);
+  if (p.commType===CUSTOM) return p.commNote || (v!=null ? `${rupee(v)} per student` : '');
   return v==null ? (p.commission||'') : p.commType==='% of 1 month rent' ? `${v}% of 1 month rent` : p.commType==='Days of rent' ? `${v} days of rent` : `${rupee(v)} per student`;
 }
 const agrState = p => !p.agreement ? 'none' : p.agreement.status==='Confirmed' ? 'confirmed' : 'sent';
 const isVerified = p => !!(p.verify && (p.verify.info || p.verify.visit));
-const S = { tab:'pgs', pgs:[], inq:[], qP:'', qI:'', fP:'All', fI:'Open', fLoc:'', db:null, dl:null, canWrite:true, loaded:false };
+const S = { settings:{}, tab:'pgs', pgs:[], inq:[], qP:'', qI:'', fP:'All', fI:'Open', fLoc:'', db:null, dl:null, canWrite:true, loaded:false };
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const num = v => (v === '' || v == null || isNaN(+v)) ? null : +v;
@@ -255,22 +258,57 @@ function bars(title, counts){
 }
 function renderDash(){
   const el = $('dash'); if (gate(el)) return;
-  const t0 = today0(), m0 = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime();
+  const t0 = today0(), now = new Date(), m0 = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
   const owners = new Set(S.pgs.map(p=>last10(p.phone)).filter(Boolean)).size;
-  const verified = S.pgs.filter(p=>p.verify&&(p.verify.info||p.verify.visit)).length;
+  const verified = S.pgs.filter(isVerified).length;
   const totalBeds = S.pgs.reduce((s,p)=>s+(num(p.totalBeds)||0),0), free = S.pgs.reduce((s,p)=>s+(num(p.beds)>0?num(p.beds):0),0);
   const stale = S.pgs.filter(isStale).length;
+  const open = S.inq.filter(i=>!CLOSED.includes(status(i)));
   const todayN = S.inq.filter(i=>(i.createdAt||0)>=t0).length, monthN = S.inq.filter(i=>(i.createdAt||0)>=m0).length;
   const due = S.inq.filter(dueToday).length, od = S.inq.filter(overdue).length, visits = S.inq.filter(upcomingVisit).length;
-  const booked = S.inq.filter(i=>status(i)==='Booked').length, conv = S.inq.length ? Math.round(booked/S.inq.length*100) : 0;
-  const bySrc = {}, byArea = {}, byStatus = {};
-  S.inq.forEach(i=>{ bySrc[i.source||'Unknown']=(bySrc[i.source||'Unknown']||0)+1; const a=(i.area||'Not given').trim(); byArea[a]=(byArea[a]||0)+1; byStatus[status(i)]=(byStatus[status(i)]||0)+1; });
-  const bookedI = S.inq.filter(i=>status(i)==='Booked');
+  const fresh = S.inq.filter(i=>status(i)==='New').length;
+  const bookedI = S.inq.filter(i=>status(i)==='Booked'), booked = bookedI.length;
+  const conv = S.inq.length ? Math.round(booked/S.inq.length*100) : 0;
   const commRecv = bookedI.filter(i=>i.commStatus==='Received').reduce((s,i)=>s+(num(i.commAmount)||0),0);
   const commPend = bookedI.filter(i=>i.commStatus!=='Received').reduce((s,i)=>s+(num(i.commAmount)||0),0);
+  const monthEarned = bookedI.filter(i=>(i.updatedAt||0)>=m0 && i.commStatus==='Received').reduce((s,i)=>s+(num(i.commAmount)||0),0);
   const pipe = S.inq.filter(i=>['Visit Scheduled','Visit Completed','Booking Pending'].includes(status(i)) && i.pgId)
     .reduce((s,i)=>{ const p = S.pgs.find(x=>x.id===i.pgId); return s + ((p&&commissionFor(p))||0); },0);
   const avgComm = (()=>{ const v = S.pgs.map(commissionFor).filter(x=>x!=null&&x>0); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : null; })();
+  const agrOk = S.pgs.filter(p=>agrState(p)==='confirmed').length, agrWait = S.pgs.filter(p=>agrState(p)==='sent').length, agrNone = S.pgs.filter(p=>agrState(p)==='none').length;
+  const hr = now.getHours(), hello = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
+
+  // needs attention
+  const todo = [
+    [od, ['overdue follow-up','overdue follow-ups'], 'Call them today', 'inq:Overdue', 'bad'],
+    [due, ['follow-up due today','follow-ups due today'], 'Due today', 'inq:Due today', 'warn'],
+    [fresh, ['new enquiry not contacted','new enquiries not contacted'], 'Reply on WhatsApp', 'inq:Uncontacted', 'warn'],
+    [visits, ['upcoming site visit','upcoming site visits'], 'Confirm with student & owner', 'inq:Upcoming visits', 'ok'],
+    [agrWait, ['owner agreement waiting','owner agreements waiting'], 'Ask owner to reply I AGREE', 'pgs:Waiting for owner', 'warn'],
+    [commPend ? bookedI.filter(i=>i.commStatus!=='Received').length : 0, ['commission to collect','commissions to collect'], rupee(commPend) + ' pending from owners', 'inq:Booked', 'bad'],
+    [stale, ['PG to reconfirm','PGs to reconfirm'], 'Older than 7 days', 'pgs:Needs reconfirm', 'mute'],
+  ].filter(x=>x[0]>0);
+  const todoHtml = todo.length ? todo.map(([n,l,sub,go,c])=>`<button class="todo t-${c}" data-go="${go}"><b>${n}</b><span><strong>${n>1?l[1]:l[0]}</strong><small>${esc(sub)}</small></span><i>›</i></button>`).join('')
+    : `<div class="allgood">✓ All caught up. No follow-ups pending.</div>`;
+
+  // pipeline
+  const stages = [['New',['New','Follow-up Required']],['Contacted',['Contacted','PGs Suggested','Owner Response Pending']],['Visit',['Visit Scheduled','Visit Completed']],['Booking',['Booking Pending']],['Booked',['Booked']]];
+  const sc = stages.map(([l,ss])=>[l, S.inq.filter(i=>ss.includes(status(i))).length]);
+  const smax = Math.max(1, ...sc.map(x=>x[1]));
+  const funnel = `<div class="funnel">${sc.map(([l,n],k)=>`<div class="fstep"><span class="flab">${l}</span><span class="ftrk"><span class="ffill f${k}" style="width:${Math.max(n?8:0, n/smax*100)}%"></span></span><b>${n}</b></div>`).join('')}</div>
+    <p class="note" style="margin-top:6px">${S.inq.length} enquiries in total · ${conv}% booked · ${S.inq.filter(i=>status(i)==='Lost').length} lost</p>`;
+
+  // commission bar
+  const ctot = commRecv + commPend + pipe;
+  const seg = (v,c) => ctot ? `<span class="${c}" style="width:${v/ctot*100}%"></span>` : '';
+  const commHtml = `<div class="card commcard">
+      <div class="commtop"><div><small>Received</small><b class="earn">${rupee(commRecv)}</b></div><div><small>Pending</small><b class="warnc">${rupee(commPend)}</b></div><div><small>Expected</small><b>${rupee(pipe)}</b></div></div>
+      <div class="stack">${ctot ? seg(commRecv,'s-ok')+seg(commPend,'s-warn')+seg(pipe,'s-mute') : '<span class="s-empty" style="width:100%"></span>'}</div>
+      <p class="note">${avgComm!=null?`Average deal ${rupee(Math.round(avgComm))} per student · `:''}Agreements: <b>${agrOk}</b> confirmed, <b>${agrWait}</b> waiting, <b>${agrNone}</b> not sent</p>
+      <div class="row-actions" style="justify-content:flex-start"><button class="btn" data-go="pgs:No agreement">Send agreements</button><button class="btn" data-go="inq:Booked">Bookings</button></div>
+    </div>`;
+
+  // localities
   const locs = {}; const L = l => locs[l] || (locs[l] = {pgs:0, beds:0, enq:0, open:0, comm:0});
   S.pgs.forEach(p=>{ const l = locOf(p.area); if (!l) return; const o = L(l); o.pgs++; o.beds += num(p.beds)>0 ? num(p.beds) : 0; });
   S.inq.forEach(i=>{ const l = locOf(i.area); if (!l) return; const o = L(l); o.enq++; if (!CLOSED.includes(status(i))) o.open++; if (status(i)==='Booked') o.comm += num(i.commAmount)||0; });
@@ -279,32 +317,57 @@ function renderDash(){
     const gap = o.pgs===0 && o.open>0;
     return `<button class="loc ${gap?'gap':''}" data-loc="loc:${esc(l)}"><span><b>${esc(l)}</b><br><small>${gap?'Students asking, no PG listed yet. Find owners here.':`${o.pgs} PG${o.pgs===1?'':'s'} · ${o.beds} beds free`}</small></span>
       <span class="nums"><b>${o.enq}</b> enquiries${o.comm?`<br><span class="earn">${rupee(o.comm)}</span> earned`:''}</span></button>`; }).join('')).join('');
+
+  const bySrc = {}; S.inq.forEach(i=>{ bySrc[i.source||'Unknown']=(bySrc[i.source||'Unknown']||0)+1; });
   const tile = (n,l,cls='',go='') => go?`<button class="tile ${cls}" data-go="${go}"><b>${n}</b><span>${l}</span></button>`:`<div class="tile ${cls}"><b>${n}</b><span>${l}</span></div>`;
+  const link = enquiryLink();
+
   el.innerHTML = `
-    <div><h2>Today</h2><div class="tiles">
-      ${tile(todayN,'New enquiries today','','inq:Today')}${tile(due,'Follow-ups due today',due?'hot':'','inq:Due today')}${tile(od,'Overdue follow-ups',od?'hot':'','inq:Overdue')}
-      ${tile(visits,'Visits scheduled','','inq:Upcoming visits')}${tile(monthN,'Enquiries this month')}${tile(S.inq.filter(i=>status(i)==='New').length,'Not contacted yet','','inq:Uncontacted')}
+    <section class="hero">
+      <div class="hero-top"><span>${hello}</span><span>${now.toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short'})}</span></div>
+      <div class="hero-nums">
+        <button data-go="inq:Open"><b>${open.length}</b><span>open leads</span></button>
+        <button data-go="pgs:Available"><b>${free}</b><span>beds free</span></button>
+        <button data-go="inq:Booked"><b>${rupee(monthEarned)}</b><span>earned this month</span></button>
+      </div>
+      <div class="hero-sub">${todayN} new today · ${monthN} this month · ${S.pgs.length} PGs · ${owners} owners</div>
+    </section>
+
+    <div><h2>Needs your attention</h2><div class="todolist">${todoHtml}</div></div>
+
+    <div><h2>Enquiry pipeline</h2><div class="card">${funnel}</div></div>
+
+    <div><h2>Commission</h2>${commHtml}</div>
+
+    <div><h2>Get enquiries on WhatsApp</h2><div class="card wacard">
+      ${link ? `<p class="note">Put this link in your Instagram bio, posts and Google listing. Students tap it, WhatsApp opens with a ready form. When they send it, long-press their message, tap <b>Copy</b>, then in the app tap <b>+ New enquiry</b> and paste. Everything fills in.</p>
+        <div class="preview" style="max-height:90px">${esc(link)}</div>
+        <div class="row-actions" style="justify-content:flex-start"><button class="btn primary" id="wa-copy">Copy link</button><a class="btn" href="${esc(link)}" target="_blank" rel="noopener">Test it</a><button class="btn" id="wa-edit">Change number</button></div>`
+      : `<p class="note">Add your WhatsApp business number. The app makes a link for your Instagram bio that opens WhatsApp with a ready enquiry form.</p>
+        <form class="form" onsubmit="return false">${fld('wa-num','Your WhatsApp number','','tel','full','inputmode="tel" placeholder="98XXXXXXXX"')}</form>
+        <div class="row-actions" style="justify-content:flex-start"><button class="btn primary" id="wa-save">Save number</button></div>`}
     </div></div>
+
     <div><h2>Network</h2><div class="tiles">
-      ${tile(S.pgs.length,'PGs listed','','pgs:All')}${tile(owners,'Owners')}${tile(verified,'Verified PGs','good','pgs:Verified')}
-      ${tile(free,'Beds free'+(totalBeds?' of '+totalBeds:''),'good','pgs:Available')}${tile(stale,'Need availability reconfirm',stale?'hot':'','pgs:Needs reconfirm')}${tile(booked,'Bookings · '+conv+'% conversion','good','inq:Booked')}
+      ${tile(S.pgs.length,'PGs listed','','pgs:All')}${tile(verified,'Verified PGs','good','pgs:Verified')}${tile(free,'Beds free'+(totalBeds?' of '+totalBeds:''),'good','pgs:Available')}
+      ${tile(booked,'Bookings','good','inq:Booked')}${tile(conv+'%','Enquiry → booking')}${tile(stale,'Need reconfirm',stale?'hot':'','pgs:Needs reconfirm')}
     </div></div>
-    <div><h2>Commission</h2><div class="tiles">
-      ${tile(rupee(commRecv),'Received from owners','good sm','inq:Booked')}${tile(rupee(commPend),'Pending from owners',commPend?'hot sm':'sm','inq:Booked')}${tile(rupee(pipe),'Expected from visits & pending bookings','sm')}
-      ${tile(S.pgs.filter(p=>agrState(p)==='confirmed').length,'Agreements confirmed','good','pgs:Agreement confirmed')}${tile(S.pgs.filter(p=>agrState(p)==='sent').length,'Waiting for owner OK',S.pgs.some(p=>agrState(p)==='sent')?'hot':'','pgs:Waiting for owner')}${tile(S.pgs.filter(p=>agrState(p)==='none').length,'No agreement yet','','pgs:No agreement')}
-    </div>${avgComm!=null?`<p class="note" style="margin-top:6px">Average agreed commission: ${rupee(Math.round(avgComm))} per student.</p>`:''}</div>
-    <div><h2>Localities in Delhi NCR</h2>${locHtml?`<div class="loclist">${locHtml}</div><p class="note" style="margin-top:6px">Tap a locality to see its PGs.</p>`:'<p class="note">Add an area to your PGs and enquiries to see localities here.</p>'}</div>
-    ${bars('Enquiries by source', bySrc)}
-    ${bars('Enquiries by area', byArea)}
-    ${bars('Enquiries by status', byStatus)}
-    <div><h2>Export</h2><div class="exports">
-      <button class="btn" data-export="pgs">PGs to Excel (CSV)</button>
-      <button class="btn" data-export="inq">Enquiries to Excel (CSV)</button>
-      <button class="btn" data-export="backup">Full backup (JSON)</button>
+
+    <div><h2>Localities in Delhi NCR</h2>${locHtml?`<div class="loclist">${locHtml}</div>`:'<p class="note">Add an area to your PGs and enquiries to see localities here.</p>'}</div>
+    ${bars('Where enquiries come from', bySrc)}
+    <div><h2>Export &amp; backup</h2><div class="exports">
+      <button class="btn" data-export="pgs">PGs to Excel</button>
+      <button class="btn" data-export="inq">Enquiries to Excel</button>
+      <button class="btn" data-export="backup">Full backup</button>
       <button class="btn" id="import-btn">Import backup</button>
     </div></div>
     <div><h2>Account</h2><div class="bars"><span class="note">Signed in as <b>${esc(S.email||'')}</b></span>
       <button class="btn" id="signout-btn">Sign out</button></div></div>`;
+
+  const saveNum = async v => { try { await S.db.collection('settings').doc('main').set({ ...S.settings, waNumber: v }); S.settings.waNumber = v; renderDash(); toast('Saved'); } catch(e){ toast('Could not save. Try again.'); } };
+  if ($('wa-save')) $('wa-save').onclick = () => { const v = digits(V('wa-num')); if (v.length < 10) { toast('Enter a 10-digit number'); return; } saveNum(v); };
+  if ($('wa-copy')) $('wa-copy').onclick = () => copy(link);
+  if ($('wa-edit')) $('wa-edit').onclick = () => saveNum('');
 }
 
 /* ---------- sheets ---------- */
@@ -433,6 +496,40 @@ function agreementSheet(pgId, forceNew){
   };
 }
 
+/* ---------- read an enquiry from a WhatsApp message ---------- */
+function parseEnquiry(text){
+  const raw = String(text||'');
+  const r = {};
+  const field = (re) => { const m = raw.match(re); return m ? m[1].trim().replace(/^[-:–\s]+/,'') : ''; };
+  const head = raw.match(/^\s*\[[^\]]+\]\s*([^:\n]+):/m);                        // "[10/10, 9:15 am] Rahul Sharma: ..."
+  r.name = field(/^\s*(?:name|naam|नाम)\s*[:\-–]\s*(.+)$/im) || (head ? head[1].trim() : '');
+  if (/^\+?[\d\s-]{10,}$/.test(r.name)) { r.phoneFromName = r.name; r.name = ''; }
+  const ph = (raw.match(/(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}/) || [r.phoneFromName || ''])[0];
+  r.phone = ph ? digits(ph).slice(-10) : '';
+  const lo = raw.toLowerCase();
+  r.gender = /looking for\s*[:\-–]?\s*boys?\s*\/\s*girls?/i.test(raw) ? '' : /\bgirls?\b|ladki|female|लड़की/.test(lo) ? 'Girls' : /\bboys?\b|ladka|male|लड़का/.test(lo) ? 'Boys' : '';
+  const g = field(/^\s*(?:looking for|for|pg for)\s*[:\-–]\s*(.+)$/im);
+  if (/^girls?$/i.test(g)) r.gender = 'Girls'; else if (/^boys?$/i.test(g)) r.gender = 'Boys';
+  const sh = field(/^\s*sharing\s*[:\-–]\s*(.+)$/im) || raw;
+  r.sharing = /single/i.test(sh) && !/single\s*\/\s*double/i.test(sh) ? 'Single' : /double|2\s*sharing/i.test(sh) && !/double\s*\/\s*triple/i.test(sh) ? 'Double' : /triple|3\s*sharing/i.test(sh) ? 'Triple' : '';
+  const areaLine = field(/^\s*(?:area|location|locality|jagah|near)\s*[:\-–]\s*(.+)$/im);
+  const loc = locOf(areaLine || raw);
+  r.area = LOC_ZONE[loc] ? loc : areaLine;
+  const bl = field(/^\s*(?:budget|rent)[^:\n]*[:\-–]\s*(.+)$/im) || (raw.match(/(?:₹|rs\.?|inr|budget|rent)\s*[:\-]?\s*\d[\d,]*\s*k?/i) || [''])[0];
+  const bm = bl.match(/(\d[\d,]*(?:\.\d+)?)\s*(k)?/i);
+  if (bm) { let v = parseFloat(bm[1].replace(/,/g,'')); if (bm[2] || v < 100) v *= 1000; if (v >= 1000 && v <= 100000) r.budget = String(Math.round(v)); }
+  r.college = field(/^\s*(?:college|university|office|company)\s*[:\-–]\s*(.+)$/im);
+  const mv = field(/^\s*(?:move[\s-]*in(?: date)?|joining|from)\s*[:\-–]\s*(.+)$/im);
+  if (mv) { const d = new Date(mv); if (!isNaN(d)) { const z = x=>String(x).padStart(2,'0'); r.moveIn = `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}`; } else r.moveNote = mv; }
+  r.food = /veg/i.test(raw) && !/non[\s-]?veg/i.test(raw) ? 'Veg food' : /non[\s-]?veg/i.test(raw) ? 'Non-veg food' : '';
+  r.message = raw.trim();
+  return r;
+}
+function enquiryTemplate(){
+  return ['Hi Sukoon PG Network, I need a PG.','Name: ','Looking for: Boys / Girls','Area: ','Budget (₹/month): ','Sharing: Single / Double / Triple','Move-in date: '].join('\n');
+}
+function enquiryLink(){ const n = intl(S.settings.waNumber); return n ? `https://wa.me/${n}?text=${encodeURIComponent(enquiryTemplate())}` : ''; }
+
 /* ---------- tap-to-select buttons ---------- */
 const FACILITIES = ['AC','WiFi','Food','Laundry','Washing machine','Housekeeping','CCTV','Power backup','RO water','Geyser','Fridge','TV','Study table','Wardrobe','Attached washroom','Lift','Parking','Gym','Biometric entry','Warden','Security guard'];
 const HOUSE_RULES = ['Gate closes 9 PM','Gate closes 10 PM','Gate closes 11 PM','No curfew','Visitors allowed','No visitors','No smoking','No alcohol','No cooking in rooms','Deposit refundable','ID proof required','Police verification'];
@@ -488,9 +585,9 @@ function pgForm(p={}){
     ${presets('f-dep',[5000,7000,10000,15000,20000],kRs)}
     <h4>Your commission (agreed with owner)</h4>
     ${chips('f-ctype','Commission type',CTYPES,p.commType||'Fixed ₹ per student')}
-    ${fld('f-cval','Amount / % / days',p.commValue ?? (num(p.commission)!=null?p.commission:''),'number','full','inputmode="decimal" placeholder="e.g. 5000"')}
+    ${fld('f-cval','Amount ₹ / % / days',p.commValue ?? (num(p.commission)!=null?p.commission:''),'number','full','inputmode="decimal" placeholder="e.g. 5000"')}
     ${presets('f-cval',[1000,2000,3000,5000,7500,10000,15,30,50])}
-    ${fld('f-cnote','Commission terms (optional)',p.commNote ?? (num(p.commission)==null?(p.commission||''):''),'text','full','placeholder="Paid after student completes 1 month"')}
+    ${fld('f-cnote','Commission terms, or type your own deal',p.commNote ?? (num(p.commission)==null?(p.commission||''):''),'text','full','placeholder="e.g. ₹3,000 + ₹500 per month, paid after 1 month"')}
     <p class="note full earn" id="c-calc"></p>
     <h4>Availability</h4>
     ${fld('f-total','Total beds',p.totalBeds,'number','','inputmode="numeric" min="0"')}
@@ -502,9 +599,12 @@ function pgForm(p={}){
     ${chips('f-rooms','Rooms & sharing',['Single','Double','Triple','4+ sharing','AC rooms','Non-AC rooms','Attached washroom'],p.rooms,true)}
     ${chips('f-food','Food',['Breakfast','Lunch','Dinner','Veg','Non-veg','No food'],p.food,true)}
     ${chips('f-fac','Facilities',FACILITIES,p.facilities,true)}
-    ${chips('f-lock','Lock-in',['No lock-in','1 month','3 months','6 months','11 months'],p.lockIn)}
-    ${chips('f-notice','Notice period',['15 days','1 month','2 months'],p.notice)}
-    ${chips('f-elec','Electricity',['Included in rent','Separate meter','Fixed per month','₹8/unit','₹9/unit','₹10/unit'],p.electricity)}
+    ${fld('f-lock','Lock-in (tap or type)',p.lockIn,'text','full','placeholder="e.g. 3 months"')}
+    ${presets('f-lock',['No lock-in','1 month','3 months','6 months','11 months'])}
+    ${fld('f-notice','Notice period (tap or type)',p.notice,'text','full','placeholder="e.g. 1 month"')}
+    ${presets('f-notice',['15 days','1 month','2 months'])}
+    ${fld('f-elec','Electricity (tap or type your own rate)',p.electricity,'text','full','placeholder="e.g. ₹9/unit, separate meter"')}
+    ${presets('f-elec',['Included in rent','Separate meter','₹7/unit','₹8/unit','₹9/unit','₹10/unit','₹11/unit','₹500/month fixed','₹1,000/month fixed'])}
     ${chips('f-terms','House rules & terms',HOUSE_RULES,p.terms,true)}
     ${fld('f-terms-x','Other terms (optional)','','text','full','placeholder="Anything not in the buttons"')}
     <h4>Location</h4>
@@ -559,6 +659,7 @@ function pgForm(p={}){
     }
   });
   const calc = () => { const c = commissionFor({ commType:V('f-ctype'), commValue:V('f-cval'), rent:V('f-rent') });
+    if (V('f-ctype')===CUSTOM) { $('c-calc').textContent = 'Type your deal in the terms box. Put the ₹ you earn per student in the amount box, so the dashboard can count it.'; return; }
     $('c-calc').textContent = c!=null ? `You earn about ${rupee(Math.round(c))} per student${V('f-ctype')!=='Fixed ₹ per student'?' (on starting rent)':''}` : (V('f-ctype')!=='Fixed ₹ per student'&&V('f-cval')?'Add the rent to calculate your earning':''); };
   ['f-ctype','f-cval','f-rent'].forEach(id=>$(id).addEventListener('input', calc)); calc();
   if (p.id) $('pg-del').onclick = () => confirmDelete(`Delete ${p.name}?`, ()=>S.db.collection('pgs').doc(p.id).delete());
@@ -567,6 +668,7 @@ function inqForm(i={}){
   const st = status(i);
   openSheet(`<h2>${i.id?'Update enquiry':'New enquiry'}</h2>${i.code?`<div class="code">${esc(i.code)} · received ${fmtDT(i.createdAt)}</div>`:''}
     <form class="form" id="inq-form" onsubmit="return false">
+    ${i.id?'':`<label class="full paste-box">Paste the WhatsApp message (optional)<textarea id="i-paste" placeholder="Long-press the student's message in WhatsApp, tap Copy, then paste here. Name, number, area, budget fill in by themselves."></textarea></label><p class="note full earn" id="i-paste-msg"></p>`}
     <h4>Customer</h4>
     ${fld('i-name','Student / parent name *',i.name,'text','full','required')}
     ${fld('i-phone','Phone / WhatsApp',i.phone,'tel','','inputmode="tel"')}
@@ -601,6 +703,19 @@ function inqForm(i={}){
     ${area('i-notes','Notes & call log',i.notes,'12 Oct: called, wants AC single…')}
     </form><div id="del-zone"></div>
     <div class="sheet-foot">${i.id?`<button class="btn danger" id="inq-del" style="margin-right:auto">Delete</button>`:''}<button class="btn" id="sheet-cancel">Cancel</button><button class="btn primary" id="inq-save">Save</button></div>`);
+  const ip = $('i-paste');
+  if (ip) ip.addEventListener('input', () => {
+    const r = parseEnquiry(ip.value), got = [];
+    const put = (id, v, label) => { if (v && $(id)) { $(id).value = v; got.push(label); } };
+    put('i-name', r.name, 'name'); put('i-phone', r.phone, 'number'); put('i-area', r.area, 'area'); put('i-budget', r.budget, 'budget');
+    put('i-college', r.college, 'college'); put('i-move', r.moveIn, 'move-in date');
+    if (r.gender) { setChip('i-gender', r.gender); got.push(r.gender); }
+    if (r.sharing) { setChip('i-sharing', r.sharing); got.push(r.sharing); }
+    if (r.food) { setChip('i-food', r.food); got.push(r.food); }
+    setChip('i-source', 'WhatsApp');
+    const note = $('i-notes'); if (note && !note.value) note.value = 'WhatsApp: ' + r.message + (r.moveNote ? '\nMove-in: ' + r.moveNote : '');
+    $('i-paste-msg').textContent = got.length ? `Filled ${got.join(', ')}. Check and tap Save.` : 'Saved the message in notes. Please fill the name and number.';
+  });
   $('inq-save').onclick = async () => {
     if (!V('i-name')){ $('i-name').focus(); toast('Add a name'); return; }
     const pg = S.pgs.find(p=>p.name===V('i-pg'));
@@ -783,6 +898,7 @@ function startData(db, email){
   let gotP = false, gotI = false;
   const onErr = () => { toast('Could not load data. Check your connection.'); };
   unsubs.push(db.collection('pgs').onSnapshot(s => { S.pgs = s.docs.map(d=>({id:d.id,...d.data()})); gotP = true; S.loaded = gotP && gotI; render(); }, onErr));
+  unsubs.push(db.collection('settings').onSnapshot(s => { const d = s.docs.find(x=>x.id==='main'); S.settings = d ? d.data() : {}; if (S.tab==='dash') render(); }, ()=>{}));
   unsubs.push(db.collection('inquiries').onSnapshot(s => { S.inq = s.docs.map(d=>({id:d.id,...d.data()})); gotI = true; S.loaded = gotP && gotI; render(); }, onErr));
   render();
 }
