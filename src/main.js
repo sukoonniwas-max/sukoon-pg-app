@@ -99,7 +99,7 @@ function commBase(p){
 }
 const agrState = p => !p.agreement ? 'none' : p.agreement.status==='Confirmed' ? 'confirmed' : 'sent';
 const isVerified = p => !!(p.verify && (p.verify.info || p.verify.visit));
-const S = { settings:{}, tab:'pgs', pgs:[], inq:[], qP:'', qI:'', fP:'All', fI:'Open', fLoc:'', db:null, dl:null, canWrite:true, loaded:false };
+const S = { deals:[], qD:'', fLocD:'', settings:{}, tab:'pgs', pgs:[], inq:[], qP:'', qI:'', fP:'All', fI:'Open', fLoc:'', db:null, dl:null, canWrite:true, loaded:false };
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const num = v => (v === '' || v == null || isNaN(+v)) ? null : +v;
@@ -168,9 +168,11 @@ function render(){
   const free = S.pgs.reduce((s,p)=>s+(num(p.beds)>0?num(p.beds):0),0);
   const od = S.inq.filter(overdue).length;
   $('stats').innerHTML = `<b>${free}</b> beds free${od?` · <b style="color:var(--bad)">${od}</b> overdue`:''}`;
-  for (const t of ['dash','pgs','inq']){ $('view-'+t).hidden = S.tab!==t; $('tab-'+t).setAttribute('aria-selected', S.tab===t); }
-  $('fab').hidden = !S.canWrite || !S.db || S.tab==='dash'; $('fab').textContent = S.tab==='pgs' ? '+ Add PG' : '+ New enquiry';
+  $('n-deal').textContent = S.deals.length;
+  for (const t of ['dash','pgs','inq','deal']){ $('view-'+t).hidden = S.tab!==t; $('tab-'+t).setAttribute('aria-selected', S.tab===t); }
+  $('fab').hidden = !S.canWrite || !S.db || S.tab==='dash'; $('fab').textContent = S.tab==='pgs' ? '+ Add PG' : S.tab==='deal' ? '+ Add dealer' : '+ New enquiry';
   if (S.tab==='dash') return renderDash();
+  if (S.tab==='deal') return renderDeals();
   renderChips(); S.tab==='pgs' ? renderPGs() : renderInq();
 }
 function gate(el){
@@ -242,6 +244,7 @@ function renderPGs(){
         <dt>Address</dt><dd>${esc(p.address||'—')}</dd>
         <dt>Beds</dt><dd>${num(p.beds)??'?'} free of ${num(p.totalBeds)??'?'}</dd>
         <dt>Commission</dt><dd>${esc(commLabel(p))}</dd>
+        ${(()=>{ const d = S.deals.find(x=>x.id===p.dealerId); return d ? `<dt>Dealer</dt><dd>${esc(d.name)} · ${esc(d.phone||'')}</dd>` : ''; })()}
         ${p.notes?`<dt>Private notes</dt><dd>${esc(p.notes)}</dd>`:''}
         <dt>Updated</dt><dd>${fmtD(p.updatedAt)}</dd>
       </dl>${S.canWrite?`<div class="row-actions">
@@ -338,14 +341,20 @@ function renderDash(){
     </div>`;
 
   // localities
-  const locs = {}; const L = l => locs[l] || (locs[l] = {pgs:0, beds:0, enq:0, open:0, comm:0});
-  S.pgs.forEach(p=>{ const l = locOf(p.area); if (!l) return; const o = L(l); o.pgs++; o.beds += num(p.beds)>0 ? num(p.beds) : 0; });
+  const locs = {}; const L = l => locs[l] || (locs[l] = {pgs:0, beds:0, enq:0, open:0, comm:0, list:[], dl:[]});
+  S.pgs.forEach(p=>{ const l = locOf(p.area); if (!l) return; const o = L(l); o.pgs++; o.beds += num(p.beds)>0 ? num(p.beds) : 0; o.list.push(p); });
+  S.deals.forEach(d=>{ dealerAreas(d).forEach(a=>{ const l = locOf(a); if (l) L(l).dl.push(d); }); });
   S.inq.forEach(i=>{ const l = locOf(i.area); if (!l) return; const o = L(l); o.enq++; if (!CLOSED.includes(status(i))) o.open++; if (status(i)==='Booked') o.comm += num(i.commAmount)||0; });
   const byZone = {}; Object.entries(locs).forEach(([l,o])=>(byZone[zoneOf(l)] = byZone[zoneOf(l)] || []).push([l,o]));
-  const locHtml = ZONES.filter(z=>byZone[z]).map(z=>`<div class="zonehead">${esc(z)}</div>` + byZone[z].sort((a,b)=>b[1].pgs-a[1].pgs || b[1].enq-a[1].enq).map(([l,o])=>{
+  const locHtml = ZONES.filter(z=>byZone[z]).map(z=>`<div class="zonehead">${esc(z)} · ${byZone[z].reduce((n,[,o])=>n+o.pgs,0)} PGs</div>` + byZone[z].sort((a,b)=>b[1].pgs-a[1].pgs || b[1].enq-a[1].enq).map(([l,o])=>{
     const gap = o.pgs===0 && o.open>0;
-    return `<button class="loc ${gap?'gap':''}" data-loc="loc:${esc(l)}"><span><b>${esc(l)}</b><br><small>${gap?'Students asking, no PG listed yet. Find owners here.':`${o.pgs} PG${o.pgs===1?'':'s'} · ${o.beds} beds free`}</small></span>
-      <span class="nums"><b>${o.enq}</b> enquiries${o.comm?`<br><span class="earn">${rupee(o.comm)}</span> earned`:''}</span></button>`; }).join('')).join('');
+    return `<details class="locd ${gap?'gap':''}"><summary class="loc ${gap?'gap':''}"><span><b>${esc(l)}</b><br><small>${gap?'Students asking, no PG listed yet. Find owners here.':`${o.pgs} PG${o.pgs===1?'':'s'} · ${o.beds} beds free${o.dl.length?` · ${o.dl.length} dealer${o.dl.length>1?'s':''}`:''}`}</small></span>
+      <span class="nums"><b>${o.enq}</b> enquiries${o.comm?`<br><span class="earn">${rupee(o.comm)}</span> earned`:''}</span></summary>
+      <div class="locbody">
+        ${o.list.length ? o.list.sort((a,b)=>String(a.name).localeCompare(String(b.name))).map(p=>`<button class="locpg" data-editpg="${esc(p.id)}"><span>${esc(p.name)}</span><small>${esc(p.gender||'')} · ${rupee(p.rent)} · ${num(p.beds)>0?p.beds+' free':'full/—'}</small></button>`).join('') : '<p class="note">No PG listed here yet.</p>'}
+        ${o.dl.length ? `<div class="zonehead" style="margin-top:6px">Dealers</div>` + o.dl.map(d=>`<div class="locpg"><span>${esc(d.name)}</span><span class="row-actions" style="margin:0"><a class="btn wa" href="${esc(waLink(d.phone,'Hi '+(d.name||'')+', this is Sukoon PG Network. Do you have PGs in '+l+'?')||'#')}" target="_blank" rel="noopener" aria-disabled="${!waLink(d.phone)}">${ICON.wa}</a><a class="btn" href="${d.phone?'tel:'+esc(digits(d.phone)):'#'}" aria-disabled="${!d.phone}">${ICON.call}</a></span></div>`).join('') : ''}
+        <div class="row-actions" style="justify-content:flex-start"><button class="btn" data-loc="loc:${esc(l)}">Open PGs</button><button class="btn" data-dealloc="loc:${esc(l)}">Dealers here</button></div>
+      </div></details>`; }).join('')).join('');
 
   const bySrc = {}; S.inq.forEach(i=>{ bySrc[i.source||'Unknown']=(bySrc[i.source||'Unknown']||0)+1; });
   const tile = (n,l,cls='',go='') => go?`<button class="tile ${cls}" data-go="${go}"><b>${n}</b><span>${l}</span></button>`:`<div class="tile ${cls}"><b>${n}</b><span>${l}</span></div>`;
@@ -382,7 +391,7 @@ function renderDash(){
       ${tile(booked,'Bookings','good','inq:Booked')}${tile(conv+'%','Enquiry → booking')}${tile(stale,'Need reconfirm',stale?'hot':'','pgs:Needs reconfirm')}
     </div></div>
 
-    <div><h2>Localities in Delhi NCR</h2>${locHtml?`<div class="loclist">${locHtml}</div>`:'<p class="note">Add an area to your PGs and enquiries to see localities here.</p>'}</div>
+    <div><h2>PGs by location</h2>${locHtml?`<div class="loclist">${locHtml}</div>`:'<p class="note">Add an area to your PGs and enquiries to see localities here.</p>'}</div>
     ${bars('Where enquiries come from', bySrc)}
     <div><h2>Export &amp; backup</h2><div class="exports">
       <button class="btn" data-export="pgs">PGs to Excel</button>
@@ -559,6 +568,78 @@ function enquiryTemplate(){
 }
 function enquiryLink(){ const n = intl(S.settings.waNumber); return n ? `https://wa.me/${n}?text=${encodeURIComponent(enquiryTemplate())}` : ''; }
 
+/* ---------- dealers (brokers) by location ---------- */
+const dealerAreas = d => splitList(d.areas);
+const dealerLabel = d => `${d.name||'Dealer'}${d.phone?' · '+last10(d.phone):''}`;
+function renderDeals(){
+  const el = $('list-deal'); if (gate(el)) return;
+  // locality filter with counts
+  const counts = {}; S.deals.forEach(d=>dealerAreas(d).forEach(a=>{ const l = locOf(a); if (l) counts[l] = (counts[l]||0)+1; }));
+  const zones = {}; Object.keys(counts).forEach(l=>(zones[zoneOf(l)] = zones[zoneOf(l)] || []).push(l));
+  const ls = $('loc-deal');
+  ls.innerHTML = `<option value="">All localities (${S.deals.length})</option>` + ZONES.filter(z=>zones[z]).map(z=>`<optgroup label="${esc(z)}"><option value="zone:${esc(z)}">All of ${esc(z)}</option>${zones[z].sort().map(l=>`<option value="loc:${esc(l)}">${esc(l)} (${counts[l]})</option>`).join('')}</optgroup>`).join('');
+  ls.value = S.fLocD; if (ls.value !== S.fLocD) S.fLocD = '';
+  const q = S.qD.toLowerCase();
+  let rows = S.deals.filter(d => !q || [d.name,d.phone,d.areas,d.notes,d.firm].join(' ').toLowerCase().includes(q));
+  if (S.fLocD) rows = rows.filter(d => dealerAreas(d).some(a => locMatch(a, S.fLocD)));
+  rows.sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+  if (!S.deals.length){ el.innerHTML = `<div class="empty"><h2>No dealers yet</h2><p>Tap <b>+ Add dealer</b> to save a property dealer's name, number and the localities they cover. Use <b>Find dealers on Google Maps</b> to find them by location.</p></div>`; return; }
+  if (!rows.length){ el.innerHTML = `<div class="empty"><p>No dealer in this locality yet. Tap <b>Find dealers on Google Maps</b>.</p></div>`; return; }
+  el.innerHTML = rows.map(d=>{
+    const pgs = S.pgs.filter(p=>p.dealerId===d.id);
+    const wa = waLink(d.phone, `Hi ${d.name||''}, this is Sukoon PG Network. Do you have PGs available in ${dealerAreas(d)[0]||'your area'}? We send students and share commission.`);
+    return `<article class="card">
+      <div class="card-top"><div style="min-width:0"><h3>${esc(d.name||'Dealer')}</h3><div class="sub">${esc(d.firm||'')}${d.firm?' · ':''}${esc(dealerAreas(d).join(', ')||'No locality set')}</div></div>
+        ${pgs.length?`<div class="pills"><span class="pill p-mute">${pgs.length} PG${pgs.length>1?'s':''}</span></div>`:''}</div>
+      <div class="phone"><span class="num">${esc(d.phone||'no number')}</span>${d.phone?`<button class="copy" data-copy="${esc(d.phone)}">Copy</button>`:''}</div>
+      <div class="actions">
+        <a class="btn wa" href="${esc(wa||'#')}" target="_blank" rel="noopener" aria-disabled="${!wa}">${ICON.wa}<span class="lbl">WhatsApp</span></a>
+        <a class="btn" href="${d.phone?'tel:'+esc(digits(d.phone)):'#'}" aria-disabled="${!d.phone}">${ICON.call}<span class="lbl">Call</span></a>
+        <button class="btn" data-editdeal="${esc(d.id)}" ${S.canWrite?'':'disabled'}>Edit</button>
+      </div>
+      ${pgs.length?`<div class="note">PGs through ${esc(d.name)}: ${pgs.map(p=>`<button class="copy" data-editpg="${esc(p.id)}">${esc(p.name)}</button>`).join(' ')}</div>`:''}
+      ${d.notes?`<div class="note">${esc(d.notes)}</div>`:''}
+    </article>`;}).join('');
+}
+function dealerForm(d={}){
+  const startArea = !d.id && S.fLocD.startsWith('loc:') ? S.fLocD.slice(4) : '';
+  openSheet(`<h2>${d.id?'Edit dealer':'Add a dealer'}</h2><form class="form" onsubmit="return false">
+    ${p0paste(d)}
+    ${fld('d-name','Dealer name *',d.name,'text','full','required')}
+    ${fld('d-phone','Phone / WhatsApp *',d.phone,'tel','full','inputmode="tel"')}
+    ${fld('d-firm','Firm / office (optional)',d.firm,'text','full','placeholder="e.g. Shree Properties"')}
+    ${chips('d-areas','Localities they cover (tap all that apply)',quickAreas().concat(dealerAreas(d)).filter((x,i,a)=>a.indexOf(x)===i),d.areas||startArea,true)}
+    ${fld('d-area-x','Add another locality',"",'text','full','list="loc-list" placeholder="Type and it will be added"')}
+    ${area('d-notes','Notes',d.notes,'e.g. Has 10+ boys PGs near DTU, wants 50% commission share')}
+  </form><div id="del-zone"></div>
+  <div class="sheet-foot">${d.id?`<button class="btn danger" id="d-del" style="margin-right:auto">Delete</button>`:''}<button class="btn" id="sheet-cancel">Cancel</button><button class="btn primary" id="d-save">Save dealer</button></div>`);
+  const dp = $('d-paste');
+  if (dp) dp.addEventListener('input', () => { const r = parseMapsShare(dp.value); if (r.name) $('d-name').value = r.name; if (r.phone) $('d-phone').value = r.phone; if (r.area) setChip('d-areas', [...splitList(V('d-areas')), r.area].filter((x,i,a)=>a.indexOf(x)===i).join(', ')); });
+  $('d-save').onclick = async () => {
+    if (!V('d-name')) { $('d-name').focus(); toast('Add the dealer name'); return; }
+    if (digits(V('d-phone')).length < 10) { $('d-phone').focus(); toast('Add a 10-digit number'); return; }
+    const extra = V('d-area-x') ? [locOf(V('d-area-x'))] : [];
+    const areas = [...splitList(V('d-areas')), ...extra].filter((x,i,a)=>x && a.indexOf(x)===i).join(', ');
+    if (!d.id) { const dupe = S.deals.find(x=>last10(x.phone)===last10(V('d-phone'))); if (dupe && !$('d-save').dataset.force) { $('del-zone').innerHTML = `<div class="dup"><span>This number is already saved as <b>${esc(dupe.name)}</b>.</span><div class="row-actions"><button class="btn" data-editdeal="${esc(dupe.id)}">Open it</button><button class="btn" id="d-force">Save anyway</button></div></div>`; $('d-force').onclick = () => { $('d-save').dataset.force = '1'; $('d-save').click(); }; return; } }
+    await save(S.db.collection('dealers').doc(d.id||undefined), { name:V('d-name'), phone:V('d-phone'), firm:V('d-firm'), areas, notes:V('d-notes'), createdAt:d.createdAt||Date.now(), updatedAt:Date.now() }, 'Dealer saved');
+  };
+  if (d.id) $('d-del').onclick = () => confirmDelete(`Delete ${d.name}?`, ()=>S.db.collection('dealers').doc(d.id).delete());
+}
+function p0paste(d){ return d.id ? '' : `<label class="full paste-box">Paste from Google Maps (optional)<textarea id="d-paste" placeholder="In Google Maps open the dealer, tap Share, then Copy, and paste here."></textarea></label>`; }
+function findDealerSheet(){
+  const startArea = S.fLocD.startsWith('loc:') ? S.fLocD.slice(4) : '';
+  openSheet(`<h2>Find dealers on Google Maps</h2>
+    <p class="note">Google Maps opens with property dealers in that locality. Tap <b>Call</b> to get the number, or <b>Share → Copy</b> and paste it in <b>+ Add dealer</b>.</p>
+    <form class="form" onsubmit="return false">
+      ${fld('gd-area','Locality',startArea,'text','full','list="loc-list" placeholder="e.g. Rohini"')}
+      ${presets('gd-area', quickAreas())}
+      ${chips('gd-kind','Search for',['PG dealer','Property dealer','PG broker','Real estate agent'],'PG dealer')}
+    </form>
+    <div class="sheet-foot"><button class="btn" id="sheet-cancel">Close</button><a class="btn primary" id="gd-go" href="#" target="_blank" rel="noopener">Search</a></div>`);
+  const upd = () => { const q = `${V('gd-kind')||'PG dealer'} ${V('gd-area') ? 'in ' + V('gd-area') + ', Delhi NCR' : 'near me'}`; $('gd-go').href = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q); $('gd-go').textContent = `Search “${q}”`; };
+  ['gd-area','gd-kind'].forEach(id => { $(id).addEventListener('input', upd); $(id).addEventListener('change', upd); }); upd();
+}
+
 /* ---------- tap-to-select buttons ---------- */
 const FACILITIES = ['AC','WiFi','Food','Laundry','Washing machine','Housekeeping','CCTV','Power backup','RO water','Geyser','Fridge','TV','Study table','Wardrobe','Attached washroom','Lift','Parking','Gym','Biometric entry','Warden','Security guard'];
 const HOUSE_RULES = ['Gate closes 9 PM','Gate closes 10 PM','Gate closes 11 PM','No curfew','Visitors allowed','No visitors','No smoking','No alcohol','No cooking in rooms','Deposit refundable','ID proof required','Police verification'];
@@ -606,6 +687,7 @@ function pgForm(p={}){
     ${fld('f-owner','Owner / manager',p.owner)}
     ${fld('f-phone','Phone number',p.phone,'tel','','inputmode="tel"')}
     ${fld('f-wa','WhatsApp (if different)',p.whatsapp,'tel','full','inputmode="tel"')}
+    ${sel('f-dealer','Came through dealer (optional)',['—',...S.deals.map(d=>dealerLabel(d))],(S.deals.find(d=>d.id===p.dealerId) ? dealerLabel(S.deals.find(d=>d.id===p.dealerId)) : '—'),'full')}
     <h4>Charges</h4>
     ${fld('f-rent','Rent from (₹/mo)',p.rent,'number','','inputmode="numeric"')}
     ${fld('f-rentmax','Rent up to (₹/mo)',p.rentMax,'number','','inputmode="numeric"')}
@@ -657,7 +739,7 @@ function pgForm(p={}){
     const data = { name:V('f-name'), gender:V('f-gender'), area:V('f-area'), metro:V('f-metro'), owner:V('f-owner'), phone:V('f-phone'), whatsapp:V('f-wa'),
       rent:V('f-rent'), rentMax:V('f-rentmax'), deposit:V('f-dep'), commType:V('f-ctype'), commValue:V('f-cval'), commNote:V('f-cnote'), commission:'', totalBeds:V('f-total'), beds:V('f-beds'), availableFrom:V('f-from'),
       rooms:V('f-rooms'), rentSingle:V('f-r1'), rentSharing:V('f-r2'), food:V('f-food'), facilities:V('f-fac'), lockIn:V('f-lock'), notice:V('f-notice'), electricity:V('f-elec'), terms:[V('f-terms'),V('f-terms-x')].filter(Boolean).join(', '),
-      address:V('f-addr'), mapUrl:V('f-map'), verify, notes:V('f-notes'), agreement: p.agreement || null,
+      address:V('f-addr'), mapUrl:V('f-map'), verify, notes:V('f-notes'), agreement: p.agreement || null, dealerId: (S.deals.find(d=>dealerLabel(d)===V('f-dealer'))||{}).id || '',
       availConfirmedAt: (bedsChanged && V('f-beds')!=='') ? Date.now() : (p.availConfirmedAt||null),
       createdAt:p.createdAt||Date.now(), updatedAt:Date.now() };
     if (!p.id){ const dupe = S.pgs.find(x=>(x.name||'').toLowerCase()===data.name.toLowerCase() || (last10(data.phone) && last10(x.phone)===last10(data.phone) && (x.area||'').toLowerCase()===data.area.toLowerCase()));
@@ -897,7 +979,7 @@ async function exportData(kind){
   const d = new Date().toISOString().slice(0,10);
   if (kind==='backup'){
     const strip = r => { const { id, ...rest } = r; return { id, data: rest }; };
-    const json = JSON.stringify({ app:'sukoon-pg', exportedAt: Date.now(), pgs: S.pgs.map(strip), inquiries: S.inq.map(strip) }, null, 1);
+    const json = JSON.stringify({ app:'sukoon-pg', exportedAt: Date.now(), pgs: S.pgs.map(strip), inquiries: S.inq.map(strip), dealers: S.deals.map(strip) }, null, 1);
     try{ await S.dl.save({ filename:`sukoon-backup-${d}.json`, data: json }); toast('Backup ready'); }
     catch(e){ if (e && e.code!=='declined') toast('Backup did not work'); }
     return;
@@ -917,12 +999,16 @@ async function exportData(kind){
 }
 
 /* ---------- events ---------- */
-['dash','pgs','inq'].forEach(t => $('tab-'+t).onclick = () => { S.tab=t; render(); });
+['dash','pgs','inq','deal'].forEach(t => $('tab-'+t).onclick = () => { S.tab=t; render(); });
 $('q-pgs').oninput = e => { S.qP=e.target.value; renderPGs(); };
 $('q-inq').oninput = e => { S.qI=e.target.value; renderInq(); };
 $('loc-pgs').onchange = e => { S.fLoc = e.target.value; renderPGs(); };
 $('loc-list').innerHTML = LOCALITIES.flatMap(z=>z[1]).map(l=>`<option value="${esc(l)}"></option>`).join('');
-$('fab').onclick = () => S.tab==='pgs' ? pgForm() : inqForm();
+$('fab').onclick = () => S.tab==='pgs' ? pgForm() : S.tab==='deal' ? dealerForm() : inqForm();
+$('q-deal').oninput = e => { S.qD = e.target.value; renderDeals(); };
+$('loc-deal').onchange = e => { S.fLocD = e.target.value; renderDeals(); };
+$('add-deal-btn').onclick = () => { if (S.db) dealerForm(); else toast('Sign in first'); };
+$('find-deal-btn').onclick = () => findDealerSheet();
 document.addEventListener('click', async e => {
   const t = e.target.closest('button,a'); if (!t) { if (e.target.id==='sheet-bg') closeSheet(); return; }
   if (t.getAttribute('aria-disabled')==='true'){ e.preventDefault(); return; }
@@ -934,6 +1020,8 @@ document.addEventListener('click', async e => {
   if (t.dataset.fp) { S.fP=t.dataset.fp; render(); }
   if (t.dataset.fi) { S.fI=t.dataset.fi; render(); }
   if (t.dataset.go) { const [tab,f]=t.dataset.go.split(':'); S.tab=tab; if (tab==='pgs') S.fP=f; else S.fI=f; render(); window.scrollTo(0,0); }
+  if (t.dataset.dealloc) { S.tab='deal'; S.fLocD=t.dataset.dealloc; render(); window.scrollTo(0,0); return; }
+  if (t.dataset.editdeal) { dealerForm(S.deals.find(d=>d.id===t.dataset.editdeal)); return; }
   if (t.dataset.loc) { S.tab='pgs'; S.fLoc=t.dataset.loc; S.fP='All'; render(); window.scrollTo(0,0); }
   if (t.id==='import-btn') $('import-file').click();
   if (t.id==='find-btn') { findSheet(); return; }
@@ -956,7 +1044,7 @@ $('import-file').onchange = async e => {
     const j = JSON.parse(await f.text());
     if (!j || !Array.isArray(j.pgs) || !Array.isArray(j.inquiries)) throw new Error('format');
     const n = await importBackup(j);
-    toast(`Imported ${n.pgs} PGs and ${n.inq} enquiries`);
+    toast(`Imported ${n.pgs} PGs, ${n.inq} enquiries${n.deal?`, ${n.deal} dealers`:''}`);
   }catch(err){ toast('This file is not a Sukoon PG backup'); }
 };
 
@@ -965,13 +1053,14 @@ render();
 let unsubs = [];
 function startData(db, email){
   unsubs.forEach(u=>u()); unsubs = [];
-  Object.assign(S, { db, dl: downloads, email, pgs:[], inq:[], loaded:false, canWrite:true });
+  Object.assign(S, { db, dl: downloads, email, pgs:[], inq:[], deals:[], loaded:false, canWrite:true });
   let gotP = false, gotI = false;
   const onErr = () => { toast('Could not load data. Check your connection.'); };
   unsubs.push(db.collection('pgs').onSnapshot(s => { S.pgs = s.docs.map(d=>({id:d.id,...d.data()})); gotP = true; S.loaded = gotP && gotI; render(); }, onErr));
+  unsubs.push(db.collection('dealers').onSnapshot(s => { S.deals = s.docs.map(d=>({id:d.id,...d.data()})); render(); }, onErr));
   unsubs.push(db.collection('settings').onSnapshot(s => { const d = s.docs.find(x=>x.id==='main'); S.settings = d ? d.data() : {}; if (S.tab==='dash') render(); }, ()=>{}));
   unsubs.push(db.collection('inquiries').onSnapshot(s => { S.inq = s.docs.map(d=>({id:d.id,...d.data()})); gotI = true; S.loaded = gotP && gotI; render(); }, onErr));
   render();
 }
-function stopData(){ unsubs.forEach(u=>u()); unsubs = []; Object.assign(S, { db:null, pgs:[], inq:[], loaded:false }); closeSheet(); render(); }
+function stopData(){ unsubs.forEach(u=>u()); unsubs = []; Object.assign(S, { db:null, pgs:[], inq:[], deals:[], loaded:false }); closeSheet(); render(); }
 initAuth({ onSignedIn: startData, onSignedOut: stopData });

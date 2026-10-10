@@ -207,3 +207,14 @@ button.badge{font:inherit;font-size:.78rem;background:var(--surface);cursor:poin
 .stack{display:flex;height:12px;border-radius:99px;overflow:hidden;background:var(--bg)}
 .stack span{display:block;height:100%}
 .s-ok{background:var(--ok)}.s-warn{background:var(--marigold)}.s-mute{background:var(--teal);opacity:.35}.s-empty{background:var(--bg)}
+
+.tab{font-size:.84rem}
+.locd{border:0;padding:0}
+.locd>summary{list-style:none}
+.locd>summary::-webkit-details-marker{display:none}
+.locd[open]>summary{border-bottom-left-radius:0;border-bottom-right-radius:0}
+.locbody{background:var(--surface);border:1px solid var(--line);border-top:0;border-radius:0 0 10px 10px;padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.locpg{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;background:var(--bg);border:0;border-radius:8px;text-align:left;font:inherit;color:inherit;cursor:pointer;width:100%}
+.locpg span:first-child{font-weight:600;min-width:0;overflow-wrap:anywhere}
+.locpg small{color:var(--muted);font-size:.76rem;text-align:right}
+.locpg .btn{padding:6px 10px}

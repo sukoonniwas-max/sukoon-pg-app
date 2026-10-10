@@ -17,6 +17,7 @@
       <button class="tab" id="tab-dash" role="tab" aria-selected="false">Dashboard</button>
       <button class="tab" id="tab-pgs" role="tab" aria-selected="true">PGs <span class="n" id="n-pgs">0</span></button>
       <button class="tab" id="tab-inq" role="tab" aria-selected="false">Enquiries <span class="n" id="n-inq">0</span></button>
+      <button class="tab" id="tab-deal" role="tab" aria-selected="false">Dealers <span class="n" id="n-deal">0</span></button>
     </div>
   </header>
 
@@ -33,6 +34,18 @@
       <div class="chips" id="chips-pgs"></div>
     </div>
     <div class="list" id="list-pgs"></div>
+  </section>
+
+  <section id="view-deal" hidden>
+    <div class="tools">
+      <div class="tool-row">
+        <button class="btn primary" id="find-deal-btn" type="button">Find dealers on Google Maps</button>
+        <button class="btn" id="add-deal-btn" type="button">+ Add dealer</button>
+      </div>
+      <input class="search" id="q-deal" type="search" placeholder="Search dealer, number, locality…">
+      <select class="search" id="loc-deal" aria-label="Locality"></select>
+    </div>
+    <div class="list" id="list-deal"></div>
   </section>
 
   <section id="view-inq" hidden>

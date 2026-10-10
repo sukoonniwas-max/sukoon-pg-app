@@ -50,13 +50,14 @@ export async function importBackup(j) {
   const rows = [
     ...j.pgs.map(r => ['pgs', r]),
     ...j.inquiries.map(r => ['inquiries', r]),
+    ...(Array.isArray(j.dealers) ? j.dealers : []).map(r => ['dealers', r]),
   ].filter(([, r]) => r && r.id && r.data && typeof r.data === 'object');
   for (let i = 0; i < rows.length; i += 400) {
     const batch = writeBatch(fs);
     rows.slice(i, i + 400).forEach(([col, r]) => batch.set(doc(fs, 'users', uid, col, String(r.id)), r.data));
     await batch.commit();
   }
-  return { pgs: rows.filter(r => r[0] === 'pgs').length, inq: rows.filter(r => r[0] === 'inquiries').length };
+  return { pgs: rows.filter(r => r[0] === 'pgs').length, inq: rows.filter(r => r[0] === 'inquiries').length, deal: rows.filter(r => r[0] === 'dealers').length };
 }
 
 /* Saving files: on the phone, write the file and open the share sheet
