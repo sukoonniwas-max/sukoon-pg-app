@@ -425,25 +425,44 @@ function agrBadge(p){
 }
 function agrText(p, a){
   const d = new Date(a.sentAt || Date.now()).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
-  const rent = num(p.rent)!=null ? `${rupee(p.rent)}${num(p.rentMax)?' – '+rupee(p.rentMax):''} per month` : '';
-  const charges = [rent && 'Rent ' + rent, num(p.deposit)!=null && 'Deposit ' + rupee(p.deposit)].filter(Boolean).join(', ');
   const amount = a.amount!=null && !/days of rent|% of 1 month/.test(a.label||'') ? `${rupee(a.amount)} per student` : a.label;
-  const extra = a.amount!=null && a.label && a.label !== `${rupee(a.amount)} per student` ? ` (${a.label})` : '';
+  const extra = a.amount!=null && a.label && a.label !== `${rupee(a.amount)} per student` && !/days of rent|% of 1 month/.test(a.label||'') && p.commType!==CUSTOM ? ` (${a.label})` : '';
+  const rent = num(p.rent)!=null ? `${rupee(p.rent)}${num(p.rentMax)?' – '+rupee(p.rentMax):''} per month` : '';
+  const line = (k, v) => v ? `• ${k}: ${v}` : '';
+  const pgTerms = [
+    line('For', p.gender),
+    line('Rent', rent),
+    line('Room rent', roomRents(p)),
+    line('Security deposit', num(p.deposit)!=null ? rupee(p.deposit) : ''),
+    line('Electricity', p.electricity),
+    line('Rooms', p.rooms),
+    line('Food', p.food),
+    line('Facilities', p.facilities),
+    line('Lock-in', p.lockIn),
+    line('Notice period', p.notice),
+    line('House rules', p.terms),
+    line('Total beds', num(p.totalBeds)!=null ? String(p.totalBeds) : ''),
+    line('Beds free now', num(p.beds)!=null ? String(p.beds) : ''),
+    line('Address', p.address),
+    line('Map', mapLink(p)),
+  ].filter(Boolean);
   let n = 0; const pt = t => `${++n}. ${t}`;
   return [
     '*Sukoon PG Network – Commission Agreement*',
     `Agreement ID: ${a.id}`, `Date: ${d}`, '',
-    `PG: ${p.name}${p.area ? ', ' + p.area : ''}`,
+    `PG: *${p.name}*${p.area ? ', ' + p.area : ''}`,
     `Owner: ${p.owner || '—'}${p.phone ? ' (' + p.phone + ')' : ''}`, '',
-    'We agree that:',
+    pgTerms.length ? '*PG details we discussed (we will share these with students):*' : '',
+    ...pgTerms, pgTerms.length ? '' : null,
+    '*We agree that:*',
     pt('Sukoon PG Network will refer students to your PG.'),
     pt(`For every student who books and moves in through Sukoon PG Network, you will pay a commission of *${amount}*${extra}.`),
-    pt(`Payment: ${p.commNote || 'within 7 days of the student moving in'}.`),
-    charges ? pt(`Charges we will share with students: ${charges}.`) : '',
-    pt('You will inform us when beds become full or free.'), '',
+    pt(`Payment: ${p.commType===CUSTOM ? 'as agreed above' : (p.commNote || 'within 7 days of the student moving in')}.`),
+    pt('Rent, deposit, electricity and the facilities above will be charged to the student as written here.'),
+    pt('You will inform us when beds become full or free, or when any charge changes.'), '',
     `To confirm, please reply: *I AGREE ${a.id}*`,
     `पुष्टि के लिए जवाब दें: *I AGREE ${a.id}*`,
-  ].filter((l, i, arr) => l !== '' || (arr[i-1] !== '' && i > 0)).join('\n');
+  ].filter(l => l !== null).filter((l, i, arr) => l !== '' || (i > 0 && arr[i-1] !== '')).join('\n');
 }
 function shrinkImage(file){
   return new Promise((resolve, reject) => {
