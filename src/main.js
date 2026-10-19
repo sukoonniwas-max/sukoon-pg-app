@@ -5,7 +5,7 @@ import '@fontsource/figtree/700.css';
 import '@fontsource/bricolage-grotesque/600.css';
 import '@fontsource/bricolage-grotesque/800.css';
 import './style.css';
-import { initAuth, signOutUser, importBackup, downloads } from './firebase.js';
+import { initAuth, signOutUser, importBackup, downloads, OWNER_EMAIL } from './firebase.js';
 import { resolveMapsLink } from './maps.js';
 
 
@@ -98,8 +98,9 @@ function commBase(p){
   return v==null ? (p.commission||'') : p.commType==='% of 1 month rent' ? `${v}% of 1 month rent` : p.commType==='Days of rent' ? `${v} days of rent` : `${rupee(v)} per student`;
 }
 const agrState = p => !p.agreement ? 'none' : p.agreement.status==='Confirmed' ? 'confirmed' : 'sent';
+const memberName = e => { const m = S.members.find(x=>x.id===String(e||'').toLowerCase()); return (m && m.name) || String(e||'').split('@')[0]; };
 const isVerified = p => !!(p.verify && (p.verify.info || p.verify.visit));
-const S = { deals:[], qD:'', fLocD:'', settings:{}, tab:'pgs', pgs:[], inq:[], qP:'', qI:'', fP:'All', fI:'Open', fLoc:'', db:null, dl:null, canWrite:true, loaded:false };
+const S = { members:[], space:{}, deals:[], qD:'', fLocD:'', settings:{}, tab:'pgs', pgs:[], inq:[], qP:'', qI:'', fP:'All', fI:'Open', fLoc:'', db:null, dl:null, canWrite:true, loaded:false };
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const num = v => (v === '' || v == null || isNaN(+v)) ? null : +v;
@@ -251,7 +252,7 @@ function renderPGs(){
         <dt>Commission</dt><dd>${esc(commLabel(p))}</dd>
         ${(()=>{ const d = S.deals.find(x=>x.id===p.dealerId); return d ? `<dt>Dealer</dt><dd>${esc(d.name)} · ${esc(d.phone||'')}</dd>` : ''; })()}
         ${p.notes?`<dt>Private notes</dt><dd>${esc(p.notes)}</dd>`:''}
-        <dt>Updated</dt><dd>${fmtD(p.updatedAt)}</dd>
+        <dt>Updated</dt><dd>${fmtD(p.updatedAt)}${p.updatedBy?' by '+esc(memberName(p.updatedBy)):''}</dd>
       </dl>${S.canWrite?`<div class="row-actions">
         <button class="btn" data-confirm="${esc(p.id)}">Availability confirmed</button>
         <a class="btn" href="${esc(waLink(p.whatsapp||p.phone, ownerConfirmMessage(p)))}" target="_blank" rel="noopener" aria-disabled="${!(p.whatsapp||p.phone)}">Ask owner to verify</a>
@@ -271,7 +272,7 @@ function renderInq(){
     const wa = waLink(i.phone, `Hi ${i.name||''}, this is Sukoon PG Network regarding your PG enquiry (${i.code||''}).`);
     const shares = (i.shares||[]).slice(-3).reverse();
     return `<article class="card ${od?'alert':''}">
-      <div class="card-top"><div style="min-width:0"><div class="code">${esc(i.code||'')}</div><h3>${esc(i.name||'Unnamed')}</h3><div class="sub">${esc([i.area?'Wants '+i.area:'',i.college,i.sharing].filter(Boolean).join(' · '))}</div></div>
+      <div class="card-top"><div style="min-width:0"><div class="code">${esc(i.code||'')}${i.updatedBy?' · updated by '+esc(memberName(i.updatedBy)):''}</div><h3>${esc(i.name||'Unnamed')}</h3><div class="sub">${esc([i.area?'Wants '+i.area:'',i.college,i.sharing].filter(Boolean).join(' · '))}</div></div>
         <div class="pills" style="justify-content:flex-end">${gPill(i.gender)}<span class="pill ${stCls(st)}">${esc(st)}</span></div></div>
       ${od?`<div class="badline">Follow-up overdue since ${fmtD(dateMs(i.followUp))}</div>`:dueToday(i)?`<div class="warnline">Follow-up due today</div>`:''}
       <div class="money"><div><small>Rent budget</small><strong>${rupee(i.budget)}</strong></div><div><small>Move-in</small><strong>${fmtD(dateMs(i.moveIn))}</strong></div><div><small>${st==='Visit Scheduled'?'Visit':'Follow-up'}</small><strong>${fmtD(dateMs(st==='Visit Scheduled'?i.visitDate:i.followUp))}</strong></div></div>
@@ -398,6 +399,7 @@ function renderDash(){
 
     <div><h2>PGs by location</h2>${locHtml?`<div class="loclist">${locHtml}</div>`:'<p class="note">Add an area to your PGs and enquiries to see localities here.</p>'}</div>
     ${bars('Where enquiries come from', bySrc)}
+    ${teamCard()}
     <div><h2>Export &amp; backup</h2><div class="exports">
       <button class="btn" data-export="pgs">PGs to Excel</button>
       <button class="btn" data-export="inq">Enquiries to Excel</button>
@@ -410,6 +412,7 @@ function renderDash(){
   const saveNum = async v => { try { await S.db.collection('settings').doc('main').set({ ...S.settings, waNumber: v }); S.settings.waNumber = v; renderDash(); toast('Saved'); } catch(e){ toast('Could not save. Try again.'); } };
   if ($('wa-save')) $('wa-save').onclick = () => { const v = digits(V('wa-num')); if (v.length < 10) { toast('Enter a 10-digit number'); return; } saveNum(v); };
   if ($('wa-copy')) $('wa-copy').onclick = () => copy(link);
+  wireTeam();
   if ($('wa-edit')) $('wa-edit').onclick = () => saveNum('');
 }
 
@@ -664,6 +667,42 @@ function findDealerSheet(){
   ['gd-area','gd-kind'].forEach(id => { $(id).addEventListener('input', upd); $(id).addEventListener('change', upd); }); upd();
 }
 
+/* ---------- team ---------- */
+const APK_LINK = 'https://github.com/sukoonniwas-max/sukoon-pg-app/releases/download/latest/SukoonPG.apk';
+function teamCard(){
+  if (!S.space.team) return `<div><h2>Team</h2><div class="card"><p class="badline">Team sharing is off. In Firebase → Firestore → <b>Rules</b>, paste the new rules (from the README in GitHub) and tap Publish. Then close and open the app.</p></div></div>`;
+  const ms = [...S.members].sort((a,b)=>(a.role==='owner'?-1:b.role==='owner'?1:String(a.name||a.id).localeCompare(String(b.name||b.id))));
+  return `<div><h2>Team · ${ms.length} member${ms.length===1?'':'s'}</h2><div class="card">
+    <p class="note">Everyone here sees and changes the same PGs, enquiries, dealers and agreements, with full rights. Add as many as you need.</p>
+    <div class="loclist">${ms.map(m=>`<div class="locpg"><span>${esc(m.name||m.id)}${m.role==='owner'?' · owner':''}<br><small style="text-align:left">${esc(m.id)}${m.phone?' · '+esc(m.phone):''}</small></span>
+      ${m.role==='owner' ? '' : `<span class="row-actions" style="margin:0">${m.phone?`<a class="btn wa" href="${esc(waLink(m.phone, inviteText(m)))}" target="_blank" rel="noopener">${ICON.wa}</a>`:''}<button class="btn danger" data-rmmember="${esc(m.id)}">Remove</button></span>`}</div>`).join('')}</div>
+    <h4 style="margin:14px 0 6px">Add a team member</h4>
+    <form class="form" onsubmit="return false">
+      ${fld('tm-name','Name','','text','')}
+      ${fld('tm-phone','WhatsApp number','','tel','','inputmode="tel"')}
+      ${fld('tm-email','Email they will sign in with *','','email','full','autocomplete="off" placeholder="name@gmail.com"')}
+    </form>
+    <div class="row-actions" style="justify-content:flex-start"><button class="btn primary" id="tm-add">Add to team</button><button class="btn" id="tm-share">Share app link</button></div>
+  </div></div>`;
+}
+function inviteText(m){
+  return `Hi ${m && m.name ? m.name : ''}, you're added to the Sukoon PG Network team.\n\n1. Download the app: ${APK_LINK}\n2. Open it, tap “First time? Create account”${m && m.id ? ` and use this email: ${m.id}` : ''}\n3. Choose any password. You'll see all PGs, enquiries and dealers.`;
+}
+function wireTeam(){
+  if ($('tm-add')) $('tm-add').onclick = async () => {
+    const email = V('tm-email').toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { $('tm-email').focus(); toast('Enter their email address'); return; }
+    if (S.members.some(m=>m.id===email)) { toast('Already on the team'); return; }
+    const m = { email, name: V('tm-name'), phone: V('tm-phone'), role: 'member', addedAt: Date.now(), addedBy: S.email };
+    try {
+      await S.db.collection('members').doc(email).set(m);
+      toast(`${m.name || email} added`);
+      if (m.phone) { const a = document.createElement('a'); a.href = waLink(m.phone, inviteText({ ...m, id: email })); a.target = '_blank'; a.rel = 'noopener'; a.click(); }
+    } catch (e) { toast('Could not add. Check your connection.'); }
+  };
+  if ($('tm-share')) $('tm-share').onclick = () => { const a = document.createElement('a'); a.href = waAny(inviteText(null)); a.target = '_blank'; a.rel = 'noopener'; a.click(); };
+}
+
 /* ---------- tap-to-select buttons ---------- */
 const FACILITIES = ['AC','WiFi','Food','Laundry','Washing machine','Housekeeping','CCTV','Power backup','RO water','Geyser','Fridge','TV','Study table','Wardrobe','Attached washroom','Lift','Parking','Gym','Biometric entry','Warden','Security guard'];
 const HOUSE_RULES = ['Gate closes 9 PM','Gate closes 10 PM','Gate closes 11 PM','No curfew','Visitors allowed','No visitors','No smoking','No alcohol','No cooking in rooms','Deposit refundable','ID proof required','Police verification'];
@@ -874,7 +913,7 @@ function inqForm(i={}){
     <span class="lbl full" style="font-size:.77rem;color:var(--muted);font-weight:600">Follow-up</span>
     ${datePresets('i-follow')}
     ${sel('i-pg','PG being visited / booked',['—',...S.pgs.map(p=>p.name)],(S.pgs.find(p=>p.id===i.pgId)||{}).name||'—','full')}
-    ${fld('i-staff','Handled by',i.staff,'text','full','placeholder="Your name or team member"')}
+    ${fld('i-staff','Handled by',i.staff || (i.id ? '' : memberName(S.email)),'text','full','placeholder="Your name or team member"')}
     ${fld('i-lost','Lost reason (if lost)',i.lostReason,'text','full','placeholder="Budget too low, found elsewhere…"')}
     ${presets('i-lost',['Budget too low','Found another PG','No reply','Location not suitable','Rooms full'])}
     <h4>Commission on this booking</h4>
@@ -1062,6 +1101,11 @@ document.addEventListener('click', async e => {
   if (t.dataset.fp) { S.fP=t.dataset.fp; render(); }
   if (t.dataset.fi) { S.fI=t.dataset.fi; render(); }
   if (t.dataset.go) { const [tab,f]=t.dataset.go.split(':'); S.tab=tab; if (tab==='pgs') S.fP=f; else S.fI=f; render(); window.scrollTo(0,0); }
+  if (t.dataset.rmmember) {
+    if (t.dataset.sure !== '1') { t.dataset.sure = '1'; t.textContent = 'Tap again to remove'; setTimeout(()=>{ if (t.isConnected) { t.dataset.sure=''; t.textContent='Remove'; } }, 4000); return; }
+    S.db.collection('members').doc(t.dataset.rmmember).delete().then(()=>toast('Removed from team')).catch(()=>toast('Could not remove'));
+    return;
+  }
   if (t.dataset.dealloc) { S.tab='deal'; S.fLocD=t.dataset.dealloc; render(); window.scrollTo(0,0); return; }
   if (t.dataset.editdeal) { dealerForm(S.deals.find(d=>d.id===t.dataset.editdeal)); return; }
   if (t.dataset.loc) { S.tab='pgs'; S.fLoc=t.dataset.loc; S.fP='All'; render(); window.scrollTo(0,0); }
@@ -1093,12 +1137,13 @@ $('import-file').onchange = async e => {
 /* ---------- data (Firebase) ---------- */
 render();
 let unsubs = [];
-function startData(db, email){
+function startData(db, email, space){
   unsubs.forEach(u=>u()); unsubs = [];
-  Object.assign(S, { db, dl: downloads, email, pgs:[], inq:[], deals:[], loaded:false, canWrite:true });
+  Object.assign(S, { db, dl: downloads, email, space: space || {}, pgs:[], inq:[], deals:[], members:[], loaded:false, canWrite:true });
   let gotP = false, gotI = false;
   const onErr = () => { toast('Could not load data. Check your connection.'); };
   unsubs.push(db.collection('pgs').onSnapshot(s => { S.pgs = s.docs.map(d=>({id:d.id,...d.data()})); gotP = true; S.loaded = gotP && gotI; render(); }, onErr));
+  if (S.space.team) unsubs.push(db.collection('members').onSnapshot(s => { S.members = s.docs.map(d=>({id:d.id,...d.data()})); if (S.tab==='dash') render(); }, ()=>{}));
   unsubs.push(db.collection('dealers').onSnapshot(s => { S.deals = s.docs.map(d=>({id:d.id,...d.data()})); render(); }, onErr));
   unsubs.push(db.collection('settings').onSnapshot(s => { const d = s.docs.find(x=>x.id==='main'); S.settings = d ? d.data() : {}; if (S.tab==='dash') render(); }, ()=>{}));
   unsubs.push(db.collection('inquiries').onSnapshot(s => { S.inq = s.docs.map(d=>({id:d.id,...d.data()})); gotI = true; S.loaded = gotP && gotI; render(); }, onErr));

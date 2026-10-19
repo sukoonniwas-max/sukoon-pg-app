@@ -21,7 +21,7 @@ Every change pushed to `main` builds a new APK automatically (see the **Actions*
 
 1. In the Firebase console, open your project.
 2. **Authentication → Sign-in method →** turn on **Email/Password**.
-3. **Firestore Database → Rules →** paste the contents of `firestore.rules` and tap **Publish**.
+3. **Firestore Database → Rules →** paste the contents of `firestore.rules` and tap **Publish**. These rules let everyone added under **Dashboard → Team** share the same data with full rights.
 4. Put your web app settings in `src/firebase-config.js`.
 
 ## Move data from the old web version
