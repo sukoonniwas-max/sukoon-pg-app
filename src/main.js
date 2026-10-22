@@ -7,6 +7,7 @@ import '@fontsource/bricolage-grotesque/800.css';
 import './style.css';
 import { initAuth, signOutUser, importBackup, downloads, OWNER_EMAIL } from './firebase.js';
 import { resolveMapsLink } from './maps.js';
+import { fetchLocality, PLACES_SETUP } from './places.js';
 
 
 const ICON = {
@@ -100,7 +101,7 @@ function commBase(p){
 const agrState = p => !p.agreement ? 'none' : p.agreement.status==='Confirmed' ? 'confirmed' : 'sent';
 const memberName = e => { const m = S.members.find(x=>x.id===String(e||'').toLowerCase()); return (m && m.name) || String(e||'').split('@')[0]; };
 const isVerified = p => !!(p.verify && (p.verify.info || p.verify.visit));
-const S = { members:[], space:{}, deals:[], qD:'', fLocD:'', settings:{}, tab:'pgs', pgs:[], inq:[], qP:'', qI:'', fP:'All', fI:'Open', fLoc:'', db:null, dl:null, canWrite:true, loaded:false };
+const S = { leads:{}, gplaces:[], gArea:'', members:[], space:{}, deals:[], qD:'', fLocD:'', settings:{}, tab:'pgs', pgs:[], inq:[], qP:'', qI:'', fP:'All', fI:'Open', fLoc:'', db:null, dl:null, canWrite:true, loaded:false };
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const num = v => (v === '' || v == null || isNaN(+v)) ? null : +v;
@@ -703,6 +704,80 @@ function wireTeam(){
   if ($('tm-share')) $('tm-share').onclick = () => { const a = document.createElement('a'); a.href = waAny(inviteText(null)); a.target = '_blank'; a.rel = 'noopener'; a.click(); };
 }
 
+/* ---------- fetch PGs from Google by locality ---------- */
+const LEAD_ST = ['Not called','Interested','Call back','Not interested','No answer'];
+const leadOf = id => S.leads[id] || {};
+function setLead(id, patch){ return S.db.collection('leads').doc(id).set({ ...leadOf(id), ...patch, updatedAt: Date.now() }).catch(()=>toast('Could not save')); }
+function googleSheet(){
+  const key = (S.settings || {}).placesKey;
+  if (!key) {
+    openSheet(`<h2>Fetch PGs from Google</h2>
+      <p class="note">This needs a Google Places API key, set up once by the owner. Paste it here after following the steps I gave you in chat.</p>
+      <p class="note">App package: <b>${PLACES_SETUP.pkg}</b><br>SHA-1: <b style="user-select:all">${PLACES_SETUP.sha1}</b></p>
+      <form class="form" onsubmit="return false">${fld('gk-key','Google Places API key','','text','full','autocomplete="off" placeholder="AIza…"')}</form>
+      <div class="sheet-foot"><button class="btn" id="sheet-cancel">Close</button><button class="btn primary" id="gk-save">Save key</button></div>`);
+    $('gk-save').onclick = async () => {
+      const k = V('gk-key'); if (!/^AIza[\w-]{20,}$/.test(k)) { toast('That does not look like a Google API key'); return; }
+      try { await S.db.collection('settings').doc('main').set({ ...S.settings, placesKey: k }); S.settings.placesKey = k; googleSheet(); toast('Key saved for the whole team'); }
+      catch(e){ toast('Could not save. Try again.'); }
+    };
+    return;
+  }
+  const startArea = S.gArea || (S.fLoc && S.fLoc.startsWith('loc:') ? S.fLoc.slice(4) : '');
+  openSheet(`<h2>Fetch PGs from Google</h2>
+    <form class="form" onsubmit="return false">
+      ${fld('gp-area','Locality','' + startArea,'text','full','list="loc-list" placeholder="e.g. Rohini Sector 7"')}
+      ${presets('gp-area', quickAreas())}
+      ${chips('gp-kind','Search for (more = more results)',['PG','Boys PG','Girls PG','Hostel','Paying guest','Co-living'],'PG, Boys PG, Girls PG',true)}
+    </form>
+    <div class="sheet-foot" style="justify-content:stretch"><button class="btn primary" id="gp-go" style="flex:1">Fetch PGs</button></div>
+    <p class="note" id="gp-msg"></p>
+    <div class="chips" id="gp-filter" style="margin-top:6px"></div>
+    <div class="pick-list" id="gp-list"></div>
+    <div class="sheet-foot"><button class="btn" id="gk-change">Change key</button><button class="btn" id="sheet-cancel">Close</button></div>`);
+  if (S.gplaces.length && S.gArea === startArea) drawGoogle();
+  $('gk-change').onclick = async () => { if (!$('gk-change').dataset.sure) { $('gk-change').dataset.sure='1'; $('gk-change').textContent='Tap again to remove key'; return; } await S.db.collection('settings').doc('main').set({ ...S.settings, placesKey:'' }); S.settings.placesKey=''; googleSheet(); };
+  $('gp-go').onclick = async () => {
+    const area = V('gp-area'); const kinds = splitList(V('gp-kind'));
+    if (!area) { $('gp-area').focus(); toast('Type or pick a locality'); return; }
+    if (!kinds.length) { toast('Pick at least one search'); return; }
+    $('gp-go').disabled = true; $('gp-go').textContent = 'Fetching…'; $('gp-msg').textContent = 'Searching Google…'; $('gp-list').innerHTML = '';
+    try {
+      S.gplaces = await fetchLocality(key, area, kinds, (n, q) => { if ($('gp-msg')) $('gp-msg').textContent = `Found ${n} so far… (${q})`; });
+      S.gArea = area; S.gFilter = 'All';
+      drawGoogle();
+    } catch (e) { $('gp-msg').textContent = (e && e.message) || 'Could not fetch. Check your internet.'; }
+    finally { if ($('gp-go')) { $('gp-go').disabled = false; $('gp-go').textContent = 'Fetch again'; } }
+  };
+}
+function drawGoogle(){
+  const list = $('gp-list'); if (!list) return;
+  const added = new Set(S.pgs.map(p=>p.placeId).filter(Boolean));
+  const nameKey = x => String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+  const addedNames = new Set(S.pgs.map(p=>nameKey(p.name)));
+  const stOf = p => added.has(p.placeId) || addedNames.has(nameKey(p.name)) ? 'Added' : (leadOf(p.placeId).status || 'Not called');
+  const counts = {}; S.gplaces.forEach(p=>{ const s = stOf(p); counts[s] = (counts[s]||0)+1; });
+  const f = S.gFilter || 'All';
+  $('gp-filter').innerHTML = ['All', ...LEAD_ST, 'Added'].filter(x=>x==='All'||counts[x]).map(x=>`<button class="chip" data-gfilter="${esc(x)}" aria-pressed="${f===x}">${esc(x)}<span class="c">${x==='All'?S.gplaces.length:counts[x]}</span></button>`).join('');
+  const rows = S.gplaces.filter(p => f==='All' || stOf(p)===f);
+  $('gp-msg').textContent = `${S.gplaces.length} PGs found in ${S.gArea}. Call them, mark the result, and tap “Add” for the ones that agree.`;
+  list.innerHTML = rows.map(p => {
+    const st = stOf(p), l = leadOf(p.placeId);
+    const wa = waLink(p.phone, `Hi, this is Sukoon PG Network. We send students to PGs in ${S.gArea}. Do you have beds available at ${p.name}?`);
+    return `<div class="gcard">
+      <div class="card-top"><div style="min-width:0"><b>${esc(p.name)}</b><small>${esc(p.address)}</small></div>
+        <span class="pill ${st==='Added'?'p-ok':st==='Interested'?'p-ok':st==='Not interested'?'p-bad':st==='Not called'?'p-mute':'p-warn'}">${esc(st)}</span></div>
+      <div class="phone"><span class="num">${esc(p.phone || 'No number on Google')}</span>${p.rating?`<small>★ ${p.rating} (${p.reviews})</small>`:''}</div>
+      <div class="actions">
+        <a class="btn" href="${p.phone?'tel:'+esc(digits(p.phone)):'#'}" aria-disabled="${!p.phone}">${ICON.call}<span class="lbl">Call</span></a>
+        <a class="btn wa" href="${esc(wa||'#')}" target="_blank" rel="noopener" aria-disabled="${!wa}">${ICON.wa}<span class="lbl">WhatsApp</span></a>
+        <a class="btn" href="${esc(p.mapUrl||'#')}" target="_blank" rel="noopener" aria-disabled="${!p.mapUrl}">${ICON.map}<span class="lbl">Map</span></a>
+      </div>
+      ${st==='Added' ? '' : `<div class="chipset">${LEAD_ST.filter(x=>x!=='Not called').map(x=>`<button type="button" class="chip mini" data-lead="${esc(p.placeId)}" data-v="${esc(x)}" aria-pressed="${l.status===x}">${esc(x)}</button>`).join('')}
+        <button type="button" class="chip mini" data-gadd="${esc(p.placeId)}" style="background:var(--teal);color:var(--on-accent);border-color:var(--teal)">+ Add to my PGs</button></div>`}
+    </div>`; }).join('') || '<p class="note">Nothing here.</p>';
+}
+
 /* ---------- tap-to-select buttons ---------- */
 const FACILITIES = ['AC','WiFi','Food','Laundry','Washing machine','Housekeeping','CCTV','Power backup','RO water','Geyser','Fridge','TV','Study table','Wardrobe','Attached washroom','Lift','Parking','Gym','Biometric entry','Warden','Security guard'];
 const HOUSE_RULES = ['Gate closes 9 PM','Gate closes 10 PM','Gate closes 11 PM','No curfew','Visitors allowed','No visitors','No smoking','No alcohol','No cooking in rooms','Deposit refundable','ID proof required','Police verification'];
@@ -818,7 +893,7 @@ function pgForm(p={}){
     const data = { name:V('f-name'), gender:V('f-gender'), area:V('f-area'), metro:V('f-metro'), owner:V('f-owner'), phone:V('f-phone'), whatsapp:V('f-wa'),
       rent:V('f-rent'), rentMax:V('f-rentmax'), deposit:V('f-dep'), commType:V('f-ctype'), commValue:V('f-cval'), commNote:V('f-cnote'), commission:'', totalBeds:V('f-total'), beds:V('f-beds'), availableFrom:V('f-from'),
       rooms:V('f-rooms'), rentSingle:V('f-r1'), rentSharing:V('f-r2'), food:V('f-food'), facilities:V('f-fac'), lockIn:V('f-lock'), notice:V('f-notice'), electricity:V('f-elec'), terms:[V('f-terms'),V('f-terms-x')].filter(Boolean).join(', '),
-      address:V('f-addr'), mapUrl:V('f-map'), verify, notes:V('f-notes'), agreement: p.agreement || null, dealerId: (S.deals.find(d=>dealerLabel(d)===V('f-dealer'))||{}).id || '',
+      address:V('f-addr'), mapUrl:V('f-map'), placeId: p.placeId || '', verify, notes:V('f-notes'), agreement: p.agreement || null, dealerId: (S.deals.find(d=>dealerLabel(d)===V('f-dealer'))||{}).id || '',
       availConfirmedAt: (bedsChanged && V('f-beds')!=='') ? Date.now() : (p.availConfirmedAt||null),
       createdAt:p.createdAt||Date.now(), updatedAt:Date.now() };
     if (!p.id){ const dupe = S.pgs.find(x=>(x.name||'').toLowerCase()===data.name.toLowerCase() || (last10(data.phone) && last10(x.phone)===last10(data.phone) && (x.area||'').toLowerCase()===data.area.toLowerCase()));
@@ -1101,6 +1176,15 @@ document.addEventListener('click', async e => {
   if (t.dataset.fp) { S.fP=t.dataset.fp; render(); }
   if (t.dataset.fi) { S.fI=t.dataset.fi; render(); }
   if (t.dataset.go) { const [tab,f]=t.dataset.go.split(':'); S.tab=tab; if (tab==='pgs') S.fP=f; else S.fI=f; render(); window.scrollTo(0,0); }
+  if (t.dataset.gfilter) { S.gFilter = t.dataset.gfilter; drawGoogle(); return; }
+  if (t.dataset.lead) { setLead(t.dataset.lead, { status: leadOf(t.dataset.lead).status===t.dataset.v ? 'Not called' : t.dataset.v, area: S.gArea }); return; }
+  if (t.dataset.gadd) {
+    const g = S.gplaces.find(x=>x.placeId===t.dataset.gadd); if (!g) return;
+    const area = S.gArea; setLead(g.placeId, { status: 'Interested', area });
+    pgForm({ name: g.name, phone: g.phone ? digits(g.phone).slice(-10) : '', address: g.address, mapUrl: g.mapUrl, area, placeId: g.placeId,
+      gender: /girl/i.test(g.name) ? 'Girls' : /boy/i.test(g.name) ? 'Boys' : '' });
+    return;
+  }
   if (t.dataset.rmmember) {
     if (t.dataset.sure !== '1') { t.dataset.sure = '1'; t.textContent = 'Tap again to remove'; setTimeout(()=>{ if (t.isConnected) { t.dataset.sure=''; t.textContent='Remove'; } }, 4000); return; }
     S.db.collection('members').doc(t.dataset.rmmember).delete().then(()=>toast('Removed from team')).catch(()=>toast('Could not remove'));
@@ -1110,6 +1194,7 @@ document.addEventListener('click', async e => {
   if (t.dataset.editdeal) { dealerForm(S.deals.find(d=>d.id===t.dataset.editdeal)); return; }
   if (t.dataset.loc) { S.tab='pgs'; S.fLoc=t.dataset.loc; S.fP='All'; render(); window.scrollTo(0,0); }
   if (t.id==='import-btn') $('import-file').click();
+  if (t.id==='fetch-btn') { if (S.db) googleSheet(); else toast('Sign in first'); return; }
   if (t.id==='find-btn') { findSheet(); return; }
   if (t.id==='addmaps-btn') { if (S.db) pgForm(); else toast('Sign in first'); return; }
   if (t.id==='signout-btn') { signOutUser(); return; }
@@ -1144,6 +1229,7 @@ function startData(db, email, space){
   const onErr = () => { toast('Could not load data. Check your connection.'); };
   unsubs.push(db.collection('pgs').onSnapshot(s => { S.pgs = s.docs.map(d=>({id:d.id,...d.data()})); gotP = true; S.loaded = gotP && gotI; render(); }, onErr));
   if (S.space.team) unsubs.push(db.collection('members').onSnapshot(s => { S.members = s.docs.map(d=>({id:d.id,...d.data()})); if (S.tab==='dash') render(); }, ()=>{}));
+  unsubs.push(db.collection('leads').onSnapshot(s => { S.leads = {}; s.docs.forEach(d=>{ S.leads[d.id] = d.data(); }); if ($('gp-list')) drawGoogle(); }, ()=>{}));
   unsubs.push(db.collection('dealers').onSnapshot(s => { S.deals = s.docs.map(d=>({id:d.id,...d.data()})); render(); }, onErr));
   unsubs.push(db.collection('settings').onSnapshot(s => { const d = s.docs.find(x=>x.id==='main'); S.settings = d ? d.data() : {}; if (S.tab==='dash') render(); }, ()=>{}));
   unsubs.push(db.collection('inquiries').onSnapshot(s => { S.inq = s.docs.map(d=>({id:d.id,...d.data()})); gotI = true; S.loaded = gotP && gotI; render(); }, onErr));

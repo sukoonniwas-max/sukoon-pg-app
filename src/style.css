@@ -233,3 +233,8 @@ header{padding-bottom:10px}
 
 .addrow{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:-4px}
 .addrow .btn{padding:8px 14px}
+
+.gcard{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.gcard b{display:block;font-weight:600}
+.gcard small{display:block;color:var(--muted);font-size:.78rem}
+.gcard .phone small{display:inline}
